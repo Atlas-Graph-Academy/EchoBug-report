@@ -526,8 +526,7 @@
         scope: LINEAR_SCOPES,
         state: state,
         code_challenge: challenge,
-        code_challenge_method: 'S256',
-        prompt: 'consent'
+        code_challenge_method: 'S256'
       });
 
       window.location.href = `${LINEAR_AUTH_URL}?${params}`;
@@ -800,7 +799,50 @@
     });
 
     // ══════════════════════════════════════
+    //  Background token refresh
+    //  Keeps session alive silently.
+    //  Linear access tokens last 24h;
+    //  refresh tokens renew indefinitely.
+    //  We refresh every 20 hours to stay
+    //  ahead of expiry.
+    // ══════════════════════════════════════
+    const REFRESH_INTERVAL = 20 * 60 * 60 * 1000; // 20 hours
+    let refreshTimer = null;
+
+    function scheduleTokenRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(async () => {
+        const tokens = getTokens();
+        if (!tokens || !tokens.refresh_token) return;
+        try {
+          const fresh = await refreshAccessToken(tokens);
+          saveTokens(fresh);
+        } catch {
+          // Silent fail — will retry next interval or on next app open
+        }
+      }, REFRESH_INTERVAL);
+    }
+
+    // Also refresh proactively whenever the app comes back to foreground
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible') return;
+      const tokens = getTokens();
+      if (!tokens || !tokens.refresh_token) return;
+      if (!isTokenExpired(tokens)) return;
+      try {
+        const fresh = await refreshAccessToken(tokens);
+        saveTokens(fresh);
+      } catch {
+        // Silent — user stays logged in with cached data
+      }
+    });
+
+    // ══════════════════════════════════════
     //  Init
+    //  Strategy: show app instantly from
+    //  cached user, refresh token in
+    //  background. Only force re-login if
+    //  refresh token is truly revoked.
     // ══════════════════════════════════════
     (async () => {
       db = await openDB();
@@ -815,7 +857,6 @@
       const returnedState = params.get('state');
 
       if (code) {
-        // Clean URL immediately
         window.history.replaceState({}, '', window.location.pathname);
 
         const savedState = sessionStorage.getItem('oauth_state');
@@ -832,6 +873,7 @@
           saveUser(user);
           showApp(user);
           await renderAll();
+          scheduleTokenRefresh();
         } catch (err) {
           console.error('OAuth error:', err);
           showLogin('Login failed. Please try again.');
@@ -848,26 +890,45 @@
 
       // Check for existing session
       const tokens = getTokens();
+      const cachedUser = getUser();
+
+      // If we have cached user data, show app immediately (no network wait)
+      if (tokens && cachedUser) {
+        showApp(cachedUser);
+        await renderAll();
+        scheduleTokenRefresh();
+
+        // Refresh token in background if expired
+        if (isTokenExpired(tokens) && tokens.refresh_token) {
+          try {
+            const fresh = await refreshAccessToken(tokens);
+            saveTokens(fresh);
+            // Update user profile in background
+            const user = await fetchLinearUser(fresh.access_token);
+            saveUser(user);
+            showApp(user);
+          } catch {
+            // Refresh failed — but don't kick user out.
+            // They can keep using the app with cached data.
+            // Only on next cold start with no cached user will they need to re-login.
+          }
+        }
+        return;
+      }
+
+      // Have tokens but no cached user — try to fetch user
       if (tokens) {
         try {
           let activeTokens = tokens;
-
-          if (isTokenExpired(tokens)) {
-            if (tokens.refresh_token) {
-              activeTokens = await refreshAccessToken(tokens);
-              saveTokens(activeTokens);
-            } else {
-              clearTokens();
-              showLogin('Session expired. Please log in again.');
-              return;
-            }
+          if (isTokenExpired(tokens) && tokens.refresh_token) {
+            activeTokens = await refreshAccessToken(tokens);
+            saveTokens(activeTokens);
           }
-
-          // Try fetching user to validate the token
           const user = await fetchLinearUser(activeTokens.access_token);
           saveUser(user);
           showApp(user);
           await renderAll();
+          scheduleTokenRefresh();
         } catch {
           clearTokens();
           showLogin('Session expired. Please log in again.');
