@@ -22,6 +22,10 @@ export async function POST(req: NextRequest) {
           size
           uploadUrl
           assetUrl
+          headers {
+            key
+            value
+          }
         }
       }
     }
@@ -53,16 +57,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: gqlData.errors[0]?.message }, { status: 500 });
   }
 
-  const { uploadUrl, assetUrl } = gqlData.data.fileUpload.uploadFile;
+  const { uploadUrl, assetUrl, headers: uploadHeaders } = gqlData.data.fileUpload.uploadFile;
 
-  // Step 2: PUT the file to the signed URL
+  // Step 2: PUT the file to the signed URL with required headers
   const fileBuffer = await file.arrayBuffer();
+  const putHeaders: Record<string, string> = {
+    'Content-Type': file.type || 'image/jpeg',
+    'Cache-Control': 'public, max-age=31536000',
+  };
+
+  // Include headers returned by Linear (e.g. x-goog-content-length-range)
+  if (Array.isArray(uploadHeaders)) {
+    for (const h of uploadHeaders) {
+      putHeaders[h.key] = h.value;
+    }
+  }
+
   const putRes = await fetch(uploadUrl, {
     method: 'PUT',
-    headers: {
-      'Content-Type': file.type || 'image/jpeg',
-      'Cache-Control': 'public, max-age=31536000',
-    },
+    headers: putHeaders,
     body: fileBuffer,
   });
 
