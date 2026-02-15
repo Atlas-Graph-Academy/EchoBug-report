@@ -1191,41 +1191,56 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const truncateLabel = (text: string, maxChars = 28) => (
         text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 1))}\u2026`
       );
+      const rectsOverlap = (
+        a: { x: number; y: number; w: number; h: number },
+        b: { x: number; y: number; w: number; h: number },
+        pad: number
+      ) => (
+        a.x < b.x + b.w + pad &&
+        a.x + a.w + pad > b.x &&
+        a.y < b.y + b.h + pad &&
+        a.y + a.h + pad > b.y
+      );
+      const measureMemLabel = (sn: MemSubNode, anchorR: number, variant: 'hover' | 'auto') => {
+        if (sn.x == null || sn.y == null) return null;
+        const nodeScreenR = anchorR * cam.scale;
+        const sizeScale = clamp(nodeScreenR / (variant === 'hover' ? 12 : 10), 0.88, 1.35);
+        const txt = truncateLabel(sn.label || sn.memId, variant === 'hover' ? 30 : 24);
+        const fs = (variant === 'hover' ? 11.8 : 10.3) * sizeScale * invS;
+        const px = (variant === 'hover' ? 8.2 : 6.8) * sizeScale * invS;
+        const py = (variant === 'hover' ? 4.4 : 3.5) * sizeScale * invS;
+        const radius = (variant === 'hover' ? 8.2 : 6.8) * sizeScale * invS;
+        const yGap = (variant === 'hover' ? 2.6 : 1.8) * invS;
+        const chipR = (variant === 'hover' ? 2.9 : 2.4) * invS;
+        const chipGap = 6 * invS;
+
+        ctx.font = `${variant === 'hover' ? 620 : 560} ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
+        const tw = ctx.measureText(txt).width;
+        const bw = tw + px * 2 + chipR * 2 + chipGap;
+        const bh = fs + py * 2;
+        const minX = worldLeft + bw / 2 + 6 * invS;
+        const maxX = worldRight - bw / 2 - 6 * invS;
+        const cx = Math.max(minX, Math.min(maxX, sn.x));
+        let by = sn.y - anchorR - yGap - bh;
+        if (by < worldTop + 4 * invS) by = sn.y + anchorR + yGap;
+        if (by + bh > worldBottom - 4 * invS) by = worldBottom - 4 * invS - bh;
+        return { txt, fs, px, py, radius, chipR, chipGap, tw, bw, bh, cx, by };
+      };
       const drawMemLabel = (sn: MemSubNode, anchorR: number, variant: 'hover' | 'auto' = 'hover') => {
         if (sn.x == null || sn.y == null) return;
-        const txt = truncateLabel(sn.label || sn.memId, variant === 'hover' ? 30 : 24);
-        const fs = (variant === 'hover' ? 12 : 10.6) * invS;
-        const px = (variant === 'hover' ? 9 : 7) * invS;
-        const py = (variant === 'hover' ? 4.8 : 3.8) * invS;
-        const radius = (variant === 'hover' ? 8.5 : 7) * invS;
-        const yGap = (variant === 'hover' ? 9 : 6.5) * invS;
+        const layout = measureMemLabel(sn, anchorR, variant);
+        if (!layout) return;
+        const { txt, fs, px, radius, chipR, chipGap, tw, bw, bh, cx, by } = layout;
         const [nr, ng, nb] = parseHexColor(sn.color);
         const accentR = Math.round((nr * 0.9 + 0.1) * 255);
         const accentG = Math.round((ng * 0.9 + 0.1) * 255);
         const accentB = Math.round((nb * 0.9 + 0.1) * 255);
         const textColor = variant === 'hover' ? '#f6fbff' : '#e4f0ff';
-        const chipR = (variant === 'hover' ? 2.9 : 2.4) * invS;
-        const chipGap = 6 * invS;
 
         ctx.save();
         ctx.font = `${variant === 'hover' ? 620 : 560} ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const tw = ctx.measureText(txt).width;
-        const bw = tw + px * 2 + chipR * 2 + chipGap;
-        const bh = fs + py * 2;
-
-        const minX = worldLeft + bw / 2 + 6 * invS;
-        const maxX = worldRight - bw / 2 - 6 * invS;
-        const cx = Math.max(minX, Math.min(maxX, sn.x));
-
-        let by = sn.y - anchorR - yGap - bh;
-        if (by < worldTop + 4 * invS) {
-          by = sn.y + anchorR + yGap;
-        }
-        if (by + bh > worldBottom - 4 * invS) {
-          by = worldBottom - 4 * invS - bh;
-        }
 
         const grad = ctx.createLinearGradient(cx, by, cx, by + bh);
         if (variant === 'hover') {
@@ -1278,6 +1293,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         ctx.restore();
       };
       const pendingEdgeEndLabels: Array<{ x: number; y: number; text: string; color: string }> = [];
+      const pendingClusterLabels: Array<{ node: ClusterNode; alpha: number; hovered: boolean }> = [];
+      const pendingMemLabels: Array<{ sn: MemSubNode; anchorR: number; variant: 'hover' | 'auto' }> = [];
 
       // ── Cluster edges ──
       let hasExpandedEdgeClip = false;
@@ -1469,16 +1486,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         ctx.setLineDash([]);
         ctx.restore();
 
-        // Label
-        const fontSize = isHovered ? 14 : 13;
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.font = `600 ${fontSize * invS}px "Avenir Next", "Segoe UI", sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = node.color;
-        ctx.fillText(node.label, node.x, node.y - node.radius - 10 * invS);
-        ctx.restore();
+        pendingClusterLabels.push({ node, alpha, hovered: isHovered });
 
         // Size count
         if (!isExpanded || !isExpMode) {
@@ -1489,40 +1497,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           ctx.textBaseline = 'middle';
           ctx.fillStyle = '#cfe5f7';
           ctx.fillText(`${node.size}`, node.x, node.y);
-          ctx.restore();
-        }
-      }
-
-      if (pendingEdgeEndLabels.length > 0) {
-        for (const label of pendingEdgeEndLabels) {
-          ctx.save();
-          const fs = 11 * invS;
-          const px = 6 * invS;
-          const py = 3.5 * invS;
-          const rr = 6 * invS;
-          ctx.font = `600 ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          const tw = ctx.measureText(label.text).width;
-          const bw = tw + px * 2;
-          const bh = fs + py * 2;
-          const cx = Math.max(worldLeft + bw / 2 + 4 * invS, Math.min(worldRight - bw / 2 - 4 * invS, label.x));
-          const cy = Math.max(worldTop + bh / 2 + 4 * invS, Math.min(worldBottom - bh / 2 - 4 * invS, label.y));
-
-          ctx.shadowBlur = 8 * invS;
-          ctx.shadowColor = 'rgba(10,16,28,0.5)';
-          ctx.fillStyle = 'rgba(8,14,26,0.88)';
-          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
-          ctx.fill();
-
-          ctx.shadowBlur = 0;
-          ctx.strokeStyle = 'rgba(205,223,246,0.42)';
-          ctx.lineWidth = Math.max(0.8 * invS, 0.8 / cam.scale);
-          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
-          ctx.stroke();
-
-          ctx.fillStyle = label.color;
-          ctx.fillText(label.text, cx, cy + 0.2 * invS);
           ctx.restore();
         }
       }
@@ -1557,7 +1531,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           }
         }
         if (hoveredNodeObj) {
-          drawMemLabel(hoveredNodeObj, hoveredNodeR, 'hover');
+          pendingMemLabels.push({ sn: hoveredNodeObj, anchorR: hoveredNodeR, variant: 'hover' });
         }
       }
 
@@ -1569,7 +1543,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
           const nodeWorldR = nodeScreenR * invS;
           const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
-          drawMemLabel(sn, baseR * 1.35, 'hover');
+          pendingMemLabels.push({ sn, anchorR: baseR * 1.35, variant: 'hover' });
         }
       }
 
@@ -1594,51 +1568,100 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           .sort((a, b) => (b.importance || 0) - (a.importance || 0));
 
         const viewportCount = viewportNodes.length;
-        const viewportShowAllThreshold = 20;
-        const minLabelBudget = 5;
-        const maxLabelBudget = 20;
+        const minLabelBudget = 3;
+        const maxLabelBudget = 10;
         const zoomRange = 6; // 从默认尺度逐步增长到满配 label 数量
         const zoomT = Math.max(0, Math.min(1, (cam.scale - 1) / zoomRange));
         const zoomBudget = Math.round(minLabelBudget + (maxLabelBudget - minLabelBudget) * zoomT);
-        const targetLabelCount = viewportCount <= viewportShowAllThreshold
-          ? viewportCount
-          : Math.min(maxLabelBudget, Math.max(minLabelBudget, zoomBudget), viewportCount);
-
-        // 视窗内节点较少时直接全显；节点较多时保留距离约束，减少拥挤与重叠。
-        const enforceSpacing = viewportCount > viewportShowAllThreshold;
-        const minAnchorDistWorld = Math.max(24, 54 - zoomT * 24) * invS;
+        const targetLabelCount = Math.min(maxLabelBudget, Math.max(minLabelBudget, zoomBudget), viewportCount);
 
         const selected: MemSubNode[] = [];
+        const occupied: Array<{ x: number; y: number; w: number; h: number }> = [];
         for (const sn of viewportNodes) {
           if (selected.length >= targetLabelCount) break;
-          if (!enforceSpacing) {
-            selected.push(sn);
-            continue;
-          }
-
-          let tooClose = false;
-          for (const picked of selected) {
-            const dx = (sn.x as number) - (picked.x as number);
-            const dy = (sn.y as number) - (picked.y as number);
-            if (dx * dx + dy * dy < minAnchorDistWorld * minAnchorDistWorld) {
-              tooClose = true;
+          const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
+          const layout = measureMemLabel(sn, baseR, 'auto');
+          if (!layout) continue;
+          const rect = { x: layout.cx - layout.bw / 2, y: layout.by, w: layout.bw, h: layout.bh };
+          const padding = 4.2 * invS;
+          let collides = false;
+          for (const occ of occupied) {
+            if (rectsOverlap(rect, occ, padding)) {
+              collides = true;
               break;
             }
           }
-          if (!tooClose) selected.push(sn);
-        }
-
-        // 若距离约束导致数量不足，按重要性补齐至预算上限。
-        if (enforceSpacing && selected.length < targetLabelCount) {
-          for (const sn of viewportNodes) {
-            if (selected.length >= targetLabelCount) break;
-            if (!selected.includes(sn)) selected.push(sn);
-          }
+          if (collides) continue;
+          selected.push(sn);
+          occupied.push(rect);
         }
 
         for (const sn of selected) {
           const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
-          drawMemLabel(sn, baseR, 'auto');
+          pendingMemLabels.push({ sn, anchorR: baseR, variant: 'auto' });
+        }
+      }
+
+      // ── All labels at top-most layer ──
+      if (pendingClusterLabels.length > 0) {
+        for (const entry of pendingClusterLabels) {
+          const { node, alpha, hovered } = entry;
+          if (node.x == null || node.y == null) continue;
+          const nodeScreenR = node.radius * cam.scale;
+          const labelScale = clamp(nodeScreenR / 38, 0.9, 1.7);
+          const fontSize = (hovered ? 12.8 : 11.8) * labelScale * invS;
+          const yOff = (node.radius + 3.2 * labelScale * invS);
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.font = `${hovered ? 640 : 600} ${fontSize}px "Avenir Next", "Segoe UI", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowBlur = (hovered ? 11 : 7) * invS;
+          ctx.shadowColor = node.glow;
+          ctx.fillStyle = '#eaf5ff';
+          ctx.fillText(node.label, node.x, node.y - yOff);
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        }
+      }
+
+      if (pendingEdgeEndLabels.length > 0) {
+        for (const label of pendingEdgeEndLabels) {
+          ctx.save();
+          const fs = 10.8 * invS;
+          const px = 6 * invS;
+          const py = 3.2 * invS;
+          const rr = 6 * invS;
+          ctx.font = `600 ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const tw = ctx.measureText(label.text).width;
+          const bw = tw + px * 2;
+          const bh = fs + py * 2;
+          const cx = Math.max(worldLeft + bw / 2 + 4 * invS, Math.min(worldRight - bw / 2 - 4 * invS, label.x));
+          const cy = Math.max(worldTop + bh / 2 + 4 * invS, Math.min(worldBottom - bh / 2 - 4 * invS, label.y));
+
+          ctx.shadowBlur = 8 * invS;
+          ctx.shadowColor = 'rgba(10,16,28,0.48)';
+          ctx.fillStyle = 'rgba(8,14,26,0.86)';
+          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
+          ctx.fill();
+
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = 'rgba(205,223,246,0.4)';
+          ctx.lineWidth = Math.max(0.78 * invS, 0.75 / cam.scale);
+          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
+          ctx.stroke();
+
+          ctx.fillStyle = label.color;
+          ctx.fillText(label.text, cx, cy + 0.2 * invS);
+          ctx.restore();
+        }
+      }
+
+      if (pendingMemLabels.length > 0) {
+        for (const item of pendingMemLabels) {
+          drawMemLabel(item.sn, item.anchorR, item.variant);
         }
       }
 
