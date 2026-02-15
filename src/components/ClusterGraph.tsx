@@ -1746,18 +1746,22 @@ function ClusterGraph({
         ctx.restore();
 
         if (focusMode && isNarrativeRelated) {
+          const sequenceSet = new Set(sequenceMemoryIdsNow);
           for (const memId of relatedMemIds) {
             const focusPoint = focusPointByMemId.get(memId);
             const mem = memById.get(memId);
             if (!focusPoint) continue;
+            const isOnSequence = sequenceSet.has(memId);
             if (focusPoint.virtual) {
               const blinkNode = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(now * 0.011 + hash(memId) * 0.0008));
               const markerR = Math.max(1.8 * invS, node.radius * 0.045);
               ctx.save();
-              ctx.globalAlpha = 0.5 + 0.35 * blinkNode;
-              ctx.fillStyle = mem?.emotion ? eStyle(mem.emotion).color : 'rgba(94, 234, 212, 0.95)';
+              ctx.globalAlpha = isOnSequence ? 0.5 + 0.35 * blinkNode : 0.3 + 0.15 * blinkNode;
+              ctx.fillStyle = isOnSequence
+                ? (mem?.emotion ? eStyle(mem.emotion).color : 'rgba(94, 234, 212, 0.95)')
+                : 'rgba(160, 170, 180, 0.6)';
               ctx.shadowBlur = 6 * invS;
-              ctx.shadowColor = 'rgba(94, 234, 212, 0.72)';
+              ctx.shadowColor = isOnSequence ? 'rgba(94, 234, 212, 0.72)' : 'rgba(160, 170, 180, 0.3)';
               ctx.beginPath();
               ctx.arc(focusPoint.x, focusPoint.y, markerR, 0, Math.PI * 2);
               ctx.fill();
@@ -1767,7 +1771,7 @@ function ClusterGraph({
               x: focusPoint.x,
               y: focusPoint.y,
               text: mem?.key || mem?.object || memId,
-              color: 'rgba(94, 234, 212, 0.98)',
+              color: isOnSequence ? 'rgba(94, 234, 212, 0.98)' : 'rgba(160, 170, 180, 0.55)',
             });
           }
         }
@@ -2011,7 +2015,8 @@ function ClusterGraph({
           ctx.fillStyle = 'rgba(7, 17, 29, 0.92)';
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
           ctx.fill();
-          ctx.strokeStyle = 'rgba(94, 234, 212, 0.48)';
+          const isTeal = item.color.includes('234, 212');
+          ctx.strokeStyle = isTeal ? 'rgba(94, 234, 212, 0.48)' : 'rgba(160, 170, 180, 0.22)';
           ctx.lineWidth = Math.max(0.8 * invS, 0.75 / cam.scale);
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
           ctx.stroke();

@@ -141,11 +141,14 @@ function buildFlowData(
 
   let currentSpineX = width / 2;
 
+  // Teal accent for spine (matches ClusterGraph sequence path)
+  const SPINE_COLOR = '#5eead4';
+  const SPINE_GLOW = 'rgba(94,234,212,0.5)';
+
   // Place spine nodes
   spineIds.forEach((id, i) => {
     const mem = srcMap.get(id)!;
     const isCur = id === currentMemory.id;
-    const style = eStyle(mem.emotion);
     const x = spineIds.length === 1 ? width / 2 : padL + spineSpacing * i;
     const y = spineY;
 
@@ -157,8 +160,8 @@ function buildFlowData(
       dateLabel: fmtDate(mem.createdAt) + ' ' + fmtTime(mem.createdAt),
       x, y,
       radius: isCur ? currentR : baseR,
-      color: style.color,
-      glow: style.glow,
+      color: SPINE_COLOR,
+      glow: SPINE_GLOW,
       isCurrent: isCur,
       role: 'spine',
       similarity: (mem as NodeWithSimilarity).similarity,
@@ -171,7 +174,7 @@ function buildFlowData(
     edges.push({
       fromId: spineIds[i],
       toId: spineIds[i + 1],
-      color: 'rgba(200,220,255,0.5)',
+      color: 'rgba(94,234,212,0.5)',
       width: 2.2,
       style: 'arrow',
     });
@@ -376,7 +379,7 @@ function drawFlow(
     const axisY = sorted[0].y;
 
     ctx.save();
-    ctx.strokeStyle = 'rgba(200,220,255,0.08)';
+    ctx.strokeStyle = 'rgba(94,234,212,0.1)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(sorted[0].x - 20, axisY);
@@ -385,7 +388,7 @@ function drawFlow(
 
     // Small arrow at the right end
     const endX = sorted[sorted.length - 1].x + 20;
-    ctx.fillStyle = 'rgba(200,220,255,0.15)';
+    ctx.fillStyle = 'rgba(94,234,212,0.18)';
     ctx.beginPath();
     ctx.moveTo(endX, axisY);
     ctx.lineTo(endX - 6, axisY - 3);
@@ -395,7 +398,7 @@ function drawFlow(
 
     // "TIME →" label
     ctx.font = '500 7px "Avenir Next", sans-serif';
-    ctx.fillStyle = 'rgba(160,188,218,0.25)';
+    ctx.fillStyle = 'rgba(94,234,212,0.22)';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillText('TIME →', sorted[sorted.length - 1].x + 18, axisY + 14);
@@ -409,9 +412,10 @@ function drawFlow(
     if (!from || !to) continue;
 
     const hl = hoveredId === edge.fromId || hoveredId === edge.toId;
+    const isSpineEdge = edge.style === 'arrow';
 
     ctx.save();
-    ctx.globalAlpha = hl ? 1 : 0.8;
+    ctx.globalAlpha = hl ? 1 : isSpineEdge ? 0.8 : 0.35;
     ctx.strokeStyle = edge.color;
     ctx.lineWidth = hl ? edge.width + 0.8 : edge.width;
     ctx.fillStyle = edge.color;
@@ -441,11 +445,13 @@ function drawFlow(
   // ── Draw nodes ──
   for (const node of nodes) {
     const isHovered = hoveredId === node.id;
+    const isSecondary = node.role !== 'spine';
     const r = isHovered ? node.radius + 3 : node.radius;
 
     // Outer glow
     ctx.save();
-    ctx.shadowBlur = isHovered ? 22 : 14;
+    if (isSecondary && !isHovered) ctx.globalAlpha = 0.4;
+    ctx.shadowBlur = isHovered ? 22 : isSecondary ? 6 : 14;
     ctx.shadowColor = node.glow;
 
     // Circle fill
@@ -453,20 +459,22 @@ function drawFlow(
     ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
     if (node.isCurrent) {
       ctx.fillStyle = node.color;
+    } else if (isSecondary) {
+      ctx.fillStyle = `${node.color}15`;
     } else {
       ctx.fillStyle = `${node.color}25`;
     }
     ctx.fill();
 
     // Circle border
-    ctx.strokeStyle = node.color;
-    ctx.lineWidth = node.isCurrent ? 3 : 1.5;
+    ctx.strokeStyle = isSecondary ? `${node.color}60` : node.color;
+    ctx.lineWidth = node.isCurrent ? 3 : isSecondary ? 1 : 1.5;
     ctx.stroke();
 
     if (!node.isCurrent) {
       ctx.beginPath();
       ctx.arc(node.x, node.y, r * 0.4, 0, Math.PI * 2);
-      ctx.fillStyle = node.color;
+      ctx.fillStyle = isSecondary ? `${node.color}80` : node.color;
       ctx.fill();
     }
     ctx.restore();
@@ -544,7 +552,7 @@ function drawFlow(
         ctx.fillText(`${Math.round(node.similarity * 100)}%`, node.x, node.y);
       }
     } else {
-      // ── Branch nodes: label badge on far side, date small ──
+      // ── Branch nodes (secondary): label badge on far side, date small ──
       const isUp = node.role === 'branch-up' || node.role === 'surprise';
       const labelY = isUp ? node.y - r - 4 : node.y + r + 4;
 
@@ -557,9 +565,9 @@ function drawFlow(
 
       // Badge background
       ctx.save();
-      ctx.globalAlpha = 0.8;
+      ctx.globalAlpha = isHovered ? 0.8 : 0.45;
       ctx.fillStyle = '#131929';
-      ctx.strokeStyle = `${node.color}40`;
+      ctx.strokeStyle = isHovered ? 'rgba(160,170,180,0.3)' : 'rgba(120,130,140,0.15)';
       ctx.lineWidth = 0.6;
 
       const br = 4;
@@ -582,13 +590,13 @@ function drawFlow(
       ctx.font = `600 9px "Avenir Next", "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#a0b8d0';
+      ctx.fillStyle = isHovered ? 'rgba(200,210,220,0.8)' : 'rgba(160,170,180,0.4)';
       ctx.fillText(node.label, node.x, badgeY + badgeH / 2);
 
       // Date tiny
       if (node.dateLabel) {
         ctx.font = '400 7px "Avenir Next", sans-serif';
-        ctx.fillStyle = 'rgba(160,188,218,0.4)';
+        ctx.fillStyle = 'rgba(160,188,218,0.25)';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         const dY = isUp ? badgeY - 10 : badgeY + badgeH + 2;
@@ -598,7 +606,7 @@ function drawFlow(
       // Similarity inside node
       if (node.similarity) {
         ctx.font = 'bold 7px "Avenir Next", sans-serif';
-        ctx.fillStyle = node.color;
+        ctx.fillStyle = `${node.color}90`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(`${Math.round(node.similarity * 100)}%`, node.x, node.y);
@@ -616,15 +624,15 @@ function drawFlow(
 
   if (spineNodes.length > 0) {
     const leftmost = spineNodes.reduce((a, b) => a.x < b.x ? a : b);
-    ctx.fillStyle = 'rgba(200,220,255,0.22)';
+    ctx.fillStyle = 'rgba(94,234,212,0.25)';
     ctx.fillText('NARRATIVE', leftmost.x - 50, leftmost.y);
   }
   if (branchUp.length > 0) {
-    ctx.fillStyle = 'rgba(255,159,67,0.25)';
+    ctx.fillStyle = 'rgba(160,170,180,0.2)';
     ctx.fillText('OBJECT', 6, branchUp[0].y);
   }
   if (branchDown.length > 0) {
-    ctx.fillStyle = 'rgba(162,155,254,0.25)';
+    ctx.fillStyle = 'rgba(160,170,180,0.2)';
     ctx.fillText('CATEGORY', 6, branchDown[0].y);
   }
 }
