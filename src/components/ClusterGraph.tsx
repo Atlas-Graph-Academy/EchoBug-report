@@ -158,6 +158,7 @@ interface SubBundlePath {
   similarity: number;
   intensity: number;
   color: [number, number, number];
+  coreIntrusion: number;
 }
 
 interface ExpandInfo {
@@ -983,13 +984,21 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         const laneSlots = 3;
         const laneIdx = hash(pairKey) % laneSlots;
         const laneT = laneSlots <= 1 ? 0 : (laneIdx / (laneSlots - 1)) * 2 - 1;
-        const jLane = laneT * boundaryR * 0.03;
+        const jLane = laneT * boundaryR * 0.026;
         const jPerp = { x: -jcDir.y, y: jcDir.x };
-        const junction = {
-          x: cx + jcDir.x * boundaryR * 0.08 + jPerp.x * jLane,
-          y: cy + jcDir.y * boundaryR * 0.08 + jPerp.y * jLane,
+        const sourceGate = {
+          x: cx + rs.ux * boundaryR * 0.24 + rs.px * jLane * 0.7,
+          y: cy + rs.uy * boundaryR * 0.24 + rs.py * jLane * 0.7,
         };
-        points.push(rs.trunkOuter, rs.trunkMid, junction, rt.trunkMid, rt.trunkOuter, tb, { x: t.x, y: t.y });
+        const targetGate = {
+          x: cx + rt.ux * boundaryR * 0.24 + rt.px * jLane * 0.7,
+          y: cy + rt.uy * boundaryR * 0.24 + rt.py * jLane * 0.7,
+        };
+        const junction = {
+          x: cx + jcDir.x * boundaryR * 0.2 + jPerp.x * jLane,
+          y: cy + jcDir.y * boundaryR * 0.2 + jPerp.y * jLane,
+        };
+        points.push(rs.trunkOuter, sourceGate, junction, targetGate, rt.trunkOuter, tb, { x: t.x, y: t.y });
       }
       const avgImp = ((s.importance || 0.3) + (t.importance || 0.3)) * 0.5;
       const [sr, sg, sbc] = parseHexColor(s.color);
@@ -1008,6 +1017,11 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         similarity: l.similarity,
         intensity: clamp(0.35 + l.similarity * 0.45 + avgImp * 0.35, 0.2, 1.2),
         color: tone,
+        coreIntrusion: clamp(
+          1 - Math.min(...points.map((p) => Math.hypot(p.x - cx, p.y - cy))) / (boundaryR * 0.28),
+          0,
+          1
+        ),
       });
     }
     subBundlePathsRef.current = bundlePaths;
@@ -1179,19 +1193,26 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       );
       const drawMemLabel = (sn: MemSubNode, anchorR: number, variant: 'hover' | 'auto' = 'hover') => {
         if (sn.x == null || sn.y == null) return;
-        const txt = truncateLabel(sn.label || sn.memId, variant === 'hover' ? 28 : 22);
-        const fs = (variant === 'hover' ? 12 : 10.5) * invS;
-        const px = (variant === 'hover' ? 7 : 6) * invS;
-        const py = (variant === 'hover' ? 4 : 3.2) * invS;
-        const radius = (variant === 'hover' ? 7 : 6) * invS;
-        const yGap = (variant === 'hover' ? 8 : 6) * invS;
+        const txt = truncateLabel(sn.label || sn.memId, variant === 'hover' ? 30 : 24);
+        const fs = (variant === 'hover' ? 12 : 10.6) * invS;
+        const px = (variant === 'hover' ? 9 : 7) * invS;
+        const py = (variant === 'hover' ? 4.8 : 3.8) * invS;
+        const radius = (variant === 'hover' ? 8.5 : 7) * invS;
+        const yGap = (variant === 'hover' ? 9 : 6.5) * invS;
+        const [nr, ng, nb] = parseHexColor(sn.color);
+        const accentR = Math.round((nr * 0.9 + 0.1) * 255);
+        const accentG = Math.round((ng * 0.9 + 0.1) * 255);
+        const accentB = Math.round((nb * 0.9 + 0.1) * 255);
+        const textColor = variant === 'hover' ? '#f6fbff' : '#e4f0ff';
+        const chipR = (variant === 'hover' ? 2.9 : 2.4) * invS;
+        const chipGap = 6 * invS;
 
         ctx.save();
-        ctx.font = `${variant === 'hover' ? 600 : 560} ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
+        ctx.font = `${variant === 'hover' ? 620 : 560} ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const tw = ctx.measureText(txt).width;
-        const bw = tw + px * 2;
+        const bw = tw + px * 2 + chipR * 2 + chipGap;
         const bh = fs + py * 2;
 
         const minX = worldLeft + bw / 2 + 6 * invS;
@@ -1206,20 +1227,54 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           by = worldBottom - 4 * invS - bh;
         }
 
-        ctx.shadowBlur = (variant === 'hover' ? 10 : 7) * invS;
-        ctx.shadowColor = variant === 'hover' ? 'rgba(12,18,32,0.45)' : 'rgba(10,14,24,0.28)';
-        ctx.fillStyle = variant === 'hover' ? 'rgba(10,16,30,0.93)' : 'rgba(8,14,24,0.74)';
+        const grad = ctx.createLinearGradient(cx, by, cx, by + bh);
+        if (variant === 'hover') {
+          grad.addColorStop(0, 'rgba(14,23,42,0.94)');
+          grad.addColorStop(1, 'rgba(8,14,28,0.9)');
+        } else {
+          grad.addColorStop(0, 'rgba(13,20,36,0.84)');
+          grad.addColorStop(1, 'rgba(8,13,25,0.78)');
+        }
+
+        ctx.shadowBlur = (variant === 'hover' ? 12 : 8) * invS;
+        ctx.shadowColor = variant === 'hover'
+          ? `rgba(${accentR},${accentG},${accentB},0.22)`
+          : 'rgba(10,14,24,0.24)';
+        ctx.fillStyle = grad;
         roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
         ctx.fill();
 
+        // Subtle top highlight for "glass" look.
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = variant === 'hover' ? 'rgba(195,220,255,0.5)' : 'rgba(170,196,230,0.34)';
-        ctx.lineWidth = Math.max(0.8 * invS, 0.8 / cam.scale);
+        const hi = ctx.createLinearGradient(cx, by, cx, by + bh * 0.6);
+        hi.addColorStop(0, 'rgba(255,255,255,0.16)');
+        hi.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = hi;
+        roundedRectPath(ctx, cx - bw / 2 + 0.2 * invS, by + 0.2 * invS, bw - 0.4 * invS, bh * 0.58, radius * 0.84);
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = variant === 'hover'
+          ? `rgba(${accentR},${accentG},${accentB},0.52)`
+          : `rgba(${accentR},${accentG},${accentB},0.34)`;
+        ctx.lineWidth = Math.max((variant === 'hover' ? 0.95 : 0.78) * invS, 0.72 / cam.scale);
         roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
         ctx.stroke();
 
-        ctx.fillStyle = variant === 'hover' ? '#f3f9ff' : '#ddeeff';
-        ctx.fillText(txt, cx, by + bh / 2 + 0.2 * invS);
+        const chipX = cx - bw / 2 + px + chipR;
+        const textX = chipX + chipR + chipGap + (tw / 2);
+        const textY = by + bh / 2 + 0.2 * invS;
+
+        ctx.shadowBlur = 6 * invS;
+        ctx.shadowColor = `rgba(${accentR},${accentG},${accentB},0.5)`;
+        ctx.beginPath();
+        ctx.arc(chipX, by + bh / 2, chipR, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${accentR},${accentG},${accentB},0.92)`;
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = textColor;
+        ctx.fillText(txt, textX, textY);
         ctx.restore();
       };
       const pendingEdgeEndLabels: Array<{ x: number; y: number; text: string; color: string }> = [];
@@ -1332,9 +1387,12 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       if (isExpMode && subNodesNow.length > 0) {
         const bundlePaths = subBundlePathsRef.current;
         if (bundlePaths.length > 0) {
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
           for (const path of bundlePaths) {
-            const width = (0.48 + path.intensity * 0.78) * invS;
-            const alpha = 0.012 + path.similarity * 0.045 + path.intensity * 0.028;
+            const centerFade = 1 - path.coreIntrusion * 0.84;
+            const width = (0.48 + path.intensity * 0.78) * invS * (1 - path.coreIntrusion * 0.6);
+            const alpha = (0.012 + path.similarity * 0.045 + path.intensity * 0.028) * centerFade;
             const [r, g, b] = path.color;
             const r255 = Math.round(r * 255);
             const g255 = Math.round(g * 255);
@@ -1348,6 +1406,19 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
             ctx.lineWidth = width;
             drawSmoothBundle(ctx, path.points);
             ctx.stroke();
+          }
+
+          const expand = expandInfoRef.current;
+          if (expand) {
+            const coreR = expand.boundaryR * 0.34;
+            const coreMask = ctx.createRadialGradient(expand.cx, expand.cy, coreR * 0.04, expand.cx, expand.cy, coreR);
+            coreMask.addColorStop(0, 'rgba(7,11,22,0.5)');
+            coreMask.addColorStop(0.55, 'rgba(7,11,22,0.24)');
+            coreMask.addColorStop(1, 'rgba(7,11,22,0)');
+            ctx.fillStyle = coreMask;
+            ctx.beginPath();
+            ctx.arc(expand.cx, expand.cy, coreR, 0, Math.PI * 2);
+            ctx.fill();
           }
         } else if (!useWebGLSub) {
           const subEdgesNow = subRenderLinksRef.current;
