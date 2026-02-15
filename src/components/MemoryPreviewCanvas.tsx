@@ -25,6 +25,8 @@ interface DisplayMemoryRecord {
   visibility: string;
   description: string;
   details: string;
+  color: string;
+  glow: string;
 }
 
 interface PillLayout {
@@ -40,7 +42,7 @@ interface PillLayout {
 
 const CSV_PATH = '/echo-memories-2026-02-15.csv';
 
-const PALETTE = [
+const EMOTION_PALETTE = [
   { color: '#ff9f43', glow: 'rgba(255,159,67,0.45)' },
   { color: '#f368e0', glow: 'rgba(243,104,224,0.45)' },
   { color: '#00d2d3', glow: 'rgba(0,210,211,0.45)' },
@@ -49,6 +51,8 @@ const PALETTE = [
   { color: '#a29bfe', glow: 'rgba(162,155,254,0.45)' },
   { color: '#1dd1a1', glow: 'rgba(29,209,161,0.45)' },
   { color: '#ff6b81', glow: 'rgba(255,107,129,0.45)' },
+  { color: '#7bed9f', glow: 'rgba(123,237,159,0.45)' },
+  { color: '#70a1ff', glow: 'rgba(112,161,255,0.45)' },
 ];
 
 function parseCsv(content: string): string[][] {
@@ -220,6 +224,28 @@ function normalizeValue(value: string): string {
   return value && value.trim() ? value.trim() : 'Unknown';
 }
 
+function getTimestamp(record: MemoryRecord): number {
+  const raw = record.time || record.createdAt;
+  if (!raw) return 0;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return 0;
+  return date.getTime();
+}
+
+function hashEmotion(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function getEmotionStyle(emotion: string) {
+  const key = normalizeValue(emotion).toLowerCase();
+  const style = EMOTION_PALETTE[hashEmotion(key) % EMOTION_PALETTE.length];
+  return style;
+}
+
 export default function MemoryPreviewCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -230,6 +256,7 @@ export default function MemoryPreviewCanvas() {
   const [records, setRecords] = useState<MemoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedEmotion, setSelectedEmotion] = useState('All');
   const [selectedRecord, setSelectedRecord] = useState<DisplayMemoryRecord | null>(null);
 
   useEffect(() => {
@@ -263,11 +290,35 @@ export default function MemoryPreviewCanvas() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedRecord]);
 
+  const sortedRecords = useMemo(() => {
+    return [...records].sort((a, b) => getTimestamp(b) - getTimestamp(a));
+  }, [records]);
+
+  const emotionSummary = useMemo(() => {
+    const countByEmotion = new Map<string, number>();
+
+    for (const record of sortedRecords) {
+      const emotion = normalizeValue(record.emotion);
+      countByEmotion.set(emotion, (countByEmotion.get(emotion) ?? 0) + 1);
+    }
+
+    return Array.from(countByEmotion.entries())
+      .map(([emotion, count]) => ({ emotion, count, ...getEmotionStyle(emotion) }))
+      .sort((a, b) => b.count - a.count || a.emotion.localeCompare(b.emotion));
+  }, [sortedRecords]);
+
+  const filteredRecords = useMemo(() => {
+    if (selectedEmotion === 'All') return sortedRecords;
+    return sortedRecords.filter((record) => normalizeValue(record.emotion) === selectedEmotion);
+  }, [selectedEmotion, sortedRecords]);
+
   const displayRecords = useMemo<DisplayMemoryRecord[]>(() => {
-    return records.map((record) => {
+    return filteredRecords.map((record) => {
       const keyText = normalizeValue(record.object || record.id);
       const createdSource = record.createdAt || record.time;
       const shortTimeText = formatShortTime(record.time || record.createdAt);
+      const emotion = normalizeValue(record.emotion);
+      const emotionStyle = getEmotionStyle(emotion);
 
       return {
         keyText,
@@ -275,13 +326,23 @@ export default function MemoryPreviewCanvas() {
         createdTimeText: formatCreatedTime(createdSource),
         category: normalizeValue(record.category),
         object: normalizeValue(record.object || record.id),
-        emotion: normalizeValue(record.emotion),
+        emotion,
         visibility: normalizeValue(record.visibility || record.location),
         description: normalizeValue(record.description),
         details: normalizeValue(record.details),
+        color: emotionStyle.color,
+        glow: emotionStyle.glow,
       };
     });
-  }, [records]);
+  }, [filteredRecords]);
+
+  useEffect(() => {
+    if (!selectedRecord) return;
+    if (selectedEmotion === 'All') return;
+    if (selectedRecord.emotion !== selectedEmotion) {
+      setSelectedRecord(null);
+    }
+  }, [selectedEmotion, selectedRecord]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -316,15 +377,14 @@ export default function MemoryPreviewCanvas() {
           cursorY += pillHeight + gapY;
         }
 
-        const palette = PALETTE[index % PALETTE.length];
         layouts.push({
           index,
           x: cursorX,
           y: cursorY,
           width: pillWidth,
           height: pillHeight,
-          color: palette.color,
-          glow: palette.glow,
+          color: item.color,
+          glow: item.glow,
           text,
         });
 
@@ -457,7 +517,31 @@ export default function MemoryPreviewCanvas() {
       <div className="memory-canvas-wrapper">
         <div className="memory-canvas-meta">
           <h2>Memory Stream</h2>
-          <span>{displayRecords.length} pills</span>
+          <span>
+            {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions
+          </span>
+        </div>
+        <div className="memory-emotion-tags">
+          <button
+            className={`memory-emotion-tag ${selectedEmotion === 'All' ? 'active' : ''}`}
+            onClick={() => setSelectedEmotion('All')}
+          >
+            All ({sortedRecords.length})
+          </button>
+          {emotionSummary.map((item) => (
+            <button
+              key={item.emotion}
+              className={`memory-emotion-tag ${selectedEmotion === item.emotion ? 'active' : ''}`}
+              onClick={() => setSelectedEmotion(item.emotion)}
+              style={{
+                borderColor: item.color,
+                color: item.color,
+                boxShadow: selectedEmotion === item.emotion ? `0 0 16px ${item.glow}` : 'none',
+              }}
+            >
+              {item.emotion} ({item.count})
+            </button>
+          ))}
         </div>
         <div className="memory-canvas-scroll" ref={containerRef}>
           <div ref={spacerRef} className="memory-canvas-spacer" />
