@@ -1561,27 +1561,88 @@ function ClusterGraph({
         }
 
         if (seqPoints.length > 1) {
-          ctx.save();
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-          ctx.strokeStyle = 'rgba(94, 234, 212, 0.22)';
-          ctx.lineWidth = 7.5 * invS;
-          ctx.beginPath();
-          ctx.moveTo(seqPoints[0].x, seqPoints[0].y);
-          for (let i = 1; i < seqPoints.length; i += 1) {
-            ctx.lineTo(seqPoints[i].x, seqPoints[i].y);
-          }
-          ctx.stroke();
+          type SeqSegment = {
+            from: { x: number; y: number };
+            to: { x: number; y: number };
+            cx: number;
+            cy: number;
+            arrowX: number;
+            arrowY: number;
+            tx: number;
+            ty: number;
+          };
+          const segments: SeqSegment[] = [];
 
-          ctx.strokeStyle = 'rgba(94, 234, 212, 0.72)';
-          ctx.lineWidth = 2.15 * invS;
-          ctx.beginPath();
-          ctx.moveTo(seqPoints[0].x, seqPoints[0].y);
-          for (let i = 1; i < seqPoints.length; i += 1) {
-            ctx.lineTo(seqPoints[i].x, seqPoints[i].y);
+          for (let i = 0; i < seqPoints.length - 1; i += 1) {
+            const from = seqPoints[i];
+            const to = seqPoints[i + 1];
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 1e-3) continue;
+
+            const ux = dx / dist;
+            const uy = dy / dist;
+            const px = -uy;
+            const py = ux;
+            const bendSign = (i % 2 === 0) ? 1 : -1;
+            const bend = Math.min(56 * invS, dist * 0.22) * bendSign;
+            const cx = (from.x + to.x) * 0.5 + px * bend;
+            const cy = (from.y + to.y) * 0.5 + py * bend;
+
+            const t = 0.9;
+            const mt = 1 - t;
+            const arrowX = mt * mt * from.x + 2 * mt * t * cx + t * t * to.x;
+            const arrowY = mt * mt * from.y + 2 * mt * t * cy + t * t * to.y;
+            let tx = 2 * mt * (cx - from.x) + 2 * t * (to.x - cx);
+            let ty = 2 * mt * (cy - from.y) + 2 * t * (to.y - cy);
+            const td = Math.hypot(tx, ty);
+            if (td < 1e-6) {
+              tx = ux;
+              ty = uy;
+            } else {
+              tx /= td;
+              ty /= td;
+            }
+
+            segments.push({ from, to, cx, cy, arrowX, arrowY, tx, ty });
           }
-          ctx.stroke();
-          ctx.restore();
+
+          if (segments.length > 0) {
+            ctx.save();
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            for (const pass of [0, 1] as const) {
+              ctx.strokeStyle = pass === 0 ? 'rgba(94, 234, 212, 0.2)' : 'rgba(94, 234, 212, 0.76)';
+              ctx.lineWidth = (pass === 0 ? 7.2 : 2.1) * invS;
+              for (const seg of segments) {
+                ctx.beginPath();
+                ctx.moveTo(seg.from.x, seg.from.y);
+                ctx.quadraticCurveTo(seg.cx, seg.cy, seg.to.x, seg.to.y);
+                ctx.stroke();
+              }
+            }
+
+            ctx.fillStyle = 'rgba(94, 234, 212, 0.94)';
+            for (const seg of segments) {
+              const arrowLen = 9.2 * invS;
+              const arrowHalfW = 4.8 * invS;
+              const nx = -seg.ty;
+              const ny = seg.tx;
+              const tipX = seg.arrowX + seg.tx * (2.4 * invS);
+              const tipY = seg.arrowY + seg.ty * (2.4 * invS);
+              const baseX = tipX - seg.tx * arrowLen;
+              const baseY = tipY - seg.ty * arrowLen;
+              ctx.beginPath();
+              ctx.moveTo(tipX, tipY);
+              ctx.lineTo(baseX + nx * arrowHalfW, baseY + ny * arrowHalfW);
+              ctx.lineTo(baseX - nx * arrowHalfW, baseY - ny * arrowHalfW);
+              ctx.closePath();
+              ctx.fill();
+            }
+            ctx.restore();
+          }
         }
       }
 
