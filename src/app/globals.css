@@ -802,6 +802,115 @@ main {
 .memory-error {
   color: #fecaca;
 }
+
+/* ── Memory Detail (Pure readable) ── */
+.memory-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 350;
+  background: rgba(3, 7, 16, 0.72);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.memory-detail-card {
+  width: min(860px, 100%);
+  max-height: min(86dvh, 900px);
+  overflow: auto;
+  background: #0c1426;
+  border: 1px solid rgba(201, 225, 255, 0.18);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+.memory-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(201, 225, 255, 0.12);
+}
+.memory-detail-header h3 {
+  font-size: 24px;
+  line-height: 1.2;
+  color: #eff7ff;
+}
+.memory-detail-header p {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #9fbcda;
+}
+.memory-detail-close {
+  border: 1px solid rgba(201, 225, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: #d9ebff;
+  border-radius: 10px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.memory-detail-close:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+.memory-detail-meta {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.memory-detail-meta div {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(201, 225, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px;
+}
+.memory-detail-meta dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #9fbcda;
+  margin-bottom: 4px;
+}
+.memory-detail-meta dd {
+  font-size: 15px;
+  color: #ecf5ff;
+}
+.memory-detail-section {
+  margin-top: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(201, 225, 255, 0.1);
+  border-radius: 12px;
+  padding: 12px;
+}
+.memory-detail-section h4 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #abd4f8;
+  margin-bottom: 8px;
+}
+.memory-detail-section p {
+  font-size: 15px;
+  line-height: 1.65;
+  color: #f0f7ff;
+  white-space: pre-wrap;
+}
+@media (max-width: 720px) {
+  .memory-detail-card {
+    padding: 14px;
+  }
+  .memory-detail-header h3 {
+    font-size: 20px;
+  }
+  .memory-detail-meta {
+    grid-template-columns: 1fr;
+  }
+}
 .success-dismiss {
   font-size: 13px;
   color: var(--text-dim);

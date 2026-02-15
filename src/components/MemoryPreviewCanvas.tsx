@@ -5,15 +5,30 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 interface MemoryRecord {
   id: string;
   object: string;
+  category: string;
+  emotion: string;
+  description: string;
+  details: string;
+  visibility: string;
+  location: string;
   time: string;
   createdAt: string;
 }
 
 interface DisplayMemoryRecord {
-  label: string;
+  keyText: string;
+  shortTimeText: string;
+  createdTimeText: string;
+  category: string;
+  object: string;
+  emotion: string;
+  visibility: string;
+  description: string;
+  details: string;
 }
 
 interface PillLayout {
+  index: number;
   x: number;
   y: number;
   width: number;
@@ -95,23 +110,39 @@ function mapRecords(rows: string[][]): MemoryRecord[] {
   if (!rows.length) return [];
 
   const header = rows[0];
-  const idIndex = header.indexOf('id');
-  const objectIndex = header.indexOf('object');
-  const timeIndex = header.indexOf('time');
-  const createdAtIndex = header.indexOf('created_at');
+  const getIndex = (name: string) => header.indexOf(name);
+
+  const idIndex = getIndex('id');
+  const objectIndex = getIndex('object');
+  const categoryIndex = getIndex('category');
+  const emotionIndex = getIndex('emotion');
+  const descriptionIndex = getIndex('description');
+  const detailsIndex = getIndex('details');
+  const visibilityIndex = getIndex('visibility');
+  const locationIndex = getIndex('location');
+  const timeIndex = getIndex('time');
+  const createdAtIndex = getIndex('created_at');
+
+  const read = (row: string[], index: number) => (index >= 0 ? (row[index] ?? '').trim() : '');
 
   return rows
     .slice(1)
     .filter((row) => row.some((value) => value.trim().length > 0))
     .map((row) => ({
-      id: idIndex >= 0 ? (row[idIndex] ?? '').trim() : '',
-      object: objectIndex >= 0 ? (row[objectIndex] ?? '').trim() : '',
-      time: timeIndex >= 0 ? (row[timeIndex] ?? '').trim() : '',
-      createdAt: createdAtIndex >= 0 ? (row[createdAtIndex] ?? '').trim() : '',
+      id: read(row, idIndex),
+      object: read(row, objectIndex),
+      category: read(row, categoryIndex),
+      emotion: read(row, emotionIndex),
+      description: read(row, descriptionIndex),
+      details: read(row, detailsIndex),
+      visibility: read(row, visibilityIndex),
+      location: read(row, locationIndex),
+      time: read(row, timeIndex),
+      createdAt: read(row, createdAtIndex),
     }));
 }
 
-function formatTime(value: string): string {
+function formatShortTime(value: string): string {
   if (!value) return 'Unknown';
 
   const date = new Date(value);
@@ -122,6 +153,23 @@ function formatTime(value: string): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+function formatCreatedTime(value: string): string {
+  if (!value) return 'Unknown';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   }).format(date);
 }
@@ -168,17 +216,21 @@ function trimToWidth(ctx: CanvasRenderingContext2D, text: string, maxWidth: numb
   return `${text.slice(0, low)}${ellipsis}`;
 }
 
+function normalizeValue(value: string): string {
+  return value && value.trim() ? value.trim() : 'Unknown';
+}
+
 export default function MemoryPreviewCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const layoutsRef = useRef<PillLayout[]>([]);
-  const totalHeightRef = useRef(0);
 
   const [records, setRecords] = useState<MemoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<DisplayMemoryRecord | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -200,11 +252,34 @@ export default function MemoryPreviewCanvas() {
     load();
   }, []);
 
+  useEffect(() => {
+    if (!selectedRecord) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedRecord(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedRecord]);
+
   const displayRecords = useMemo<DisplayMemoryRecord[]>(() => {
     return records.map((record) => {
-      const keyValue = record.object || record.id || 'Unknown';
-      const shortTime = formatTime(record.time || record.createdAt);
-      return { label: `${keyValue} · ${shortTime}` };
+      const keyText = normalizeValue(record.object || record.id);
+      const createdSource = record.createdAt || record.time;
+      const shortTimeText = formatShortTime(record.time || record.createdAt);
+
+      return {
+        keyText,
+        shortTimeText,
+        createdTimeText: formatCreatedTime(createdSource),
+        category: normalizeValue(record.category),
+        object: normalizeValue(record.object || record.id),
+        emotion: normalizeValue(record.emotion),
+        visibility: normalizeValue(record.visibility || record.location),
+        description: normalizeValue(record.description),
+        details: normalizeValue(record.details),
+      };
     });
   }, [records]);
 
@@ -231,7 +306,8 @@ export default function MemoryPreviewCanvas() {
       let cursorY = verticalPadding;
 
       displayRecords.forEach((item, index) => {
-        const textWidth = ctx.measureText(item.label).width;
+        const text = `${item.keyText} · ${item.shortTimeText}`;
+        const textWidth = ctx.measureText(text).width;
         const widthByText = Math.ceil(textWidth + 28);
         const pillWidth = Math.max(minPillWidth, Math.min(maxPillWidth, widthByText));
 
@@ -242,21 +318,22 @@ export default function MemoryPreviewCanvas() {
 
         const palette = PALETTE[index % PALETTE.length];
         layouts.push({
+          index,
           x: cursorX,
           y: cursorY,
           width: pillWidth,
           height: pillHeight,
           color: palette.color,
           glow: palette.glow,
-          text: item.label,
+          text,
         });
 
         cursorX += pillWidth + gapX;
       });
 
       layoutsRef.current = layouts;
-      totalHeightRef.current = cursorY + pillHeight + verticalPadding;
-      spacer.style.height = `${Math.max(totalHeightRef.current, container.clientHeight)}px`;
+      const totalHeight = cursorY + pillHeight + verticalPadding;
+      spacer.style.height = `${Math.max(totalHeight, container.clientHeight)}px`;
     };
 
     const render = () => {
@@ -345,6 +422,28 @@ export default function MemoryPreviewCanvas() {
     };
   }, [displayRecords]);
 
+  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top + container.scrollTop;
+
+    for (let i = layoutsRef.current.length - 1; i >= 0; i -= 1) {
+      const pill = layoutsRef.current[i];
+      const insideX = x >= pill.x && x <= pill.x + pill.width;
+      const insideY = y >= pill.y && y <= pill.y + pill.height;
+
+      if (insideX && insideY) {
+        const record = displayRecords[pill.index];
+        if (record) setSelectedRecord(record);
+        return;
+      }
+    }
+  };
+
   if (loading) {
     return <div className="memory-status">Loading memory data...</div>;
   }
@@ -354,15 +453,62 @@ export default function MemoryPreviewCanvas() {
   }
 
   return (
-    <div className="memory-canvas-wrapper">
-      <div className="memory-canvas-meta">
-        <h2>Memory Stream</h2>
-        <span>{displayRecords.length} pills</span>
+    <>
+      <div className="memory-canvas-wrapper">
+        <div className="memory-canvas-meta">
+          <h2>Memory Stream</h2>
+          <span>{displayRecords.length} pills</span>
+        </div>
+        <div className="memory-canvas-scroll" ref={containerRef}>
+          <div ref={spacerRef} className="memory-canvas-spacer" />
+          <canvas ref={canvasRef} className="memory-canvas" onClick={handleCanvasClick} />
+        </div>
       </div>
-      <div className="memory-canvas-scroll" ref={containerRef}>
-        <div ref={spacerRef} className="memory-canvas-spacer" />
-        <canvas ref={canvasRef} className="memory-canvas" />
-      </div>
-    </div>
+
+      {selectedRecord && (
+        <div className="memory-detail-backdrop" onClick={() => setSelectedRecord(null)}>
+          <article className="memory-detail-card" onClick={(event) => event.stopPropagation()}>
+            <header className="memory-detail-header">
+              <div>
+                <h3>{selectedRecord.keyText}</h3>
+                <p>Created: {selectedRecord.createdTimeText}</p>
+              </div>
+              <button className="memory-detail-close" onClick={() => setSelectedRecord(null)}>
+                Close
+              </button>
+            </header>
+
+            <dl className="memory-detail-meta">
+              <div>
+                <dt>Category</dt>
+                <dd>{selectedRecord.category}</dd>
+              </div>
+              <div>
+                <dt>Object</dt>
+                <dd>{selectedRecord.object}</dd>
+              </div>
+              <div>
+                <dt>Emotion</dt>
+                <dd>{selectedRecord.emotion}</dd>
+              </div>
+              <div>
+                <dt>Visibility</dt>
+                <dd>{selectedRecord.visibility}</dd>
+              </div>
+            </dl>
+
+            <section className="memory-detail-section">
+              <h4>Description</h4>
+              <p>{selectedRecord.description}</p>
+            </section>
+
+            <section className="memory-detail-section">
+              <h4>Details</h4>
+              <p>{selectedRecord.details}</p>
+            </section>
+          </article>
+        </div>
+      )}
+    </>
   );
 }
