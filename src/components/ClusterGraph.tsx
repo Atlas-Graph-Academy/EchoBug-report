@@ -148,6 +148,18 @@ interface MemSubLink extends SimulationLinkDatum<MemSubNode> {
   similarity: number;
 }
 
+interface BundlePathPoint {
+  x: number;
+  y: number;
+}
+
+interface SubBundlePath {
+  points: BundlePathPoint[];
+  similarity: number;
+  intensity: number;
+  color: [number, number, number];
+}
+
 interface ExpandInfo {
   clusterId: number;
   cx: number;
@@ -252,6 +264,35 @@ function roundedRectPath(
   ctx.closePath();
 }
 
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function unitVec(dx: number, dy: number): { x: number; y: number } {
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6) return { x: 1, y: 0 };
+  return { x: dx / d, y: dy / d };
+}
+
+function drawSmoothBundle(ctx: CanvasRenderingContext2D, points: BundlePathPoint[]) {
+  if (points.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  if (points.length === 2) {
+    ctx.lineTo(points[1].x, points[1].y);
+    return;
+  }
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i];
+    const n = points[i + 1];
+    const mx = (p.x + n.x) * 0.5;
+    const my = (p.y + n.y) * 0.5;
+    ctx.quadraticCurveTo(p.x, p.y, mx, my);
+  }
+  const last = points[points.length - 1];
+  ctx.lineTo(last.x, last.y);
+}
+
 export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -264,6 +305,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const subNodesRef = useRef<MemSubNode[]>([]);
   const subLinksRef = useRef<MemSubLink[]>([]);
   const subRenderLinksRef = useRef<MemSubLink[]>([]);
+  const subBundlePathsRef = useRef<SubBundlePath[]>([]);
   const hoveredNodeRef = useRef<number | null>(null);
   const hoveredMemRef = useRef<string | null>(null);
   const canvasMetricsRef = useRef<{ vw: number; vh: number; dpr: number }>({ vw: 0, vh: 0, dpr: 0 });
@@ -659,6 +701,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     const viewMin = Math.min(vw, vh);
 
     setExpandedCluster(clusterId);
+    subBundlePathsRef.current = [];
     const buildToken = ++expandBuildTokenRef.current;
 
     const memberCount = cluster.memberIds.length;
@@ -770,10 +813,12 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     const hubSet = new Set(hubIdx);
 
     const groups = new Map<number, number[]>();
+    const nodeHub = new Array<number>(simNodes.length).fill(-1);
     for (const h of hubIdx) groups.set(h, []);
     for (let i = 0; i < simNodes.length; i++) {
       if (hubSet.has(i)) {
         groups.get(i)!.push(i);
+        nodeHub[i] = i;
         continue;
       }
       let bestHub = -1;
@@ -788,38 +833,45 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       }
       if (bestHub === -1) bestHub = hubIdx[hash(simNodes[i].memId) % hubIdx.length];
       groups.get(bestHub)!.push(i);
+      nodeHub[i] = bestHub;
     }
 
     const fullTurn = Math.PI * 2;
     const hubSpacing = fullTurn / hubIdx.length;
+    const hubDir = new Map<number, { ux: number; uy: number; px: number; py: number }>();
     for (let hPos = 0; hPos < hubIdx.length; hPos++) {
       const hub = hubIdx[hPos];
       const members = groups.get(hub) || [];
       members.sort((a, b) => simNodes[b].importance - simNodes[a].importance);
-      const baseAngle = hPos * hubSpacing + (hash(simNodes[hub].memId + ':hub') % 1000) / 1000 * 0.08;
-      const sectorWidth = Math.max(0.5, Math.min(1.2, hubSpacing * 0.92));
+      const baseAngle = hPos * hubSpacing + (((hash(simNodes[hub].memId + ':hub') % 1000) / 1000) - 0.5) * 0.2;
+      const ux = Math.cos(baseAngle);
+      const uy = Math.sin(baseAngle);
+      const px = -uy;
+      const py = ux;
+      hubDir.set(hub, { ux, uy, px, py });
 
       for (let rank = 0; rank < members.length; rank++) {
         const idx = members[rank];
         const n = simNodes[idx];
         const isHub = idx === hub;
         const imp = n.importance;
+        const branch = Math.floor(rank / 8);
+        const branchSlots = Math.min(8, members.length - branch * 8);
+        const slot = rank % 8;
+        const t = branchSlots <= 1 ? 0.5 : slot / (branchSlots - 1);
 
-        const ring = Math.floor(rank / 10);
-        const ringOffset = ring * boundaryR * 0.07;
-        const radialBias = isHub ? 0.14 : 0.24 + (1 - imp) * 0.58;
-        n.targetR = Math.min(boundaryR * 0.94, boundaryR * radialBias + ringOffset);
+        // Keep hubs and high-importance nodes closer to center; push peripheral nodes outward.
+        let targetR = boundaryR * (isHub ? 0.2 : 0.34 + (1 - imp) * 0.42 + branch * 0.065);
+        targetR = clamp(targetR, boundaryR * 0.14, boundaryR * 0.95);
+        n.targetR = targetR;
 
-        const slot = rank % 10;
-        const slotsInRing = Math.min(10, members.length - ring * 10);
-        const t = slotsInRing <= 1 ? 0.5 : slot / (slotsInRing - 1);
-        const angleOffset = (t - 0.5) * sectorWidth;
-        const jitterA = (((hash(n.memId + ':a') % 1000) / 1000) - 0.5) * 0.06;
-        const jitterR = (((hash(n.memId + ':r') % 1000) / 1000) - 0.5) * boundaryR * 0.02;
-        const angle = baseAngle + angleOffset + jitterA;
-        const r = Math.max(boundaryR * 0.08, Math.min(boundaryR * 0.96, n.targetR + jitterR));
-        n.x = cx + Math.cos(angle) * r;
-        n.y = cy + Math.sin(angle) * r;
+        const baseSpread = boundaryR * (0.06 + (1 - imp) * 0.06 + branch * 0.02);
+        const side = (t - 0.5) * 2 * baseSpread;
+        const jitterAlong = ((((hash(n.memId + ':ar') % 1000) / 1000) - 0.5)) * boundaryR * 0.04;
+        const jitterSide = ((((hash(n.memId + ':as') % 1000) / 1000) - 0.5)) * baseSpread * 0.45;
+        const along = targetR + jitterAlong;
+        n.x = cx + ux * along + px * (side + jitterSide);
+        n.y = cy + uy * along + py * (side + jitterSide);
       }
     }
 
@@ -864,6 +916,101 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     } else {
       subRenderLinksRef.current = links;
     }
+
+    const hubRoutes = new Map<number, {
+      ux: number;
+      uy: number;
+      px: number;
+      py: number;
+      trunkMid: BundlePathPoint;
+      trunkOuter: BundlePathPoint;
+    }>();
+    for (const h of hubIdx) {
+      const dir = hubDir.get(h);
+      if (!dir) continue;
+      hubRoutes.set(h, {
+        ...dir,
+        trunkMid: { x: cx + dir.ux * boundaryR * 0.33, y: cy + dir.uy * boundaryR * 0.33 },
+        trunkOuter: { x: cx + dir.ux * boundaryR * 0.57, y: cy + dir.uy * boundaryR * 0.57 },
+      });
+    }
+
+    const branchPoint = (idx: number): BundlePathPoint => {
+      const n = simNodes[idx];
+      if (n.x == null || n.y == null) return { x: cx, y: cy };
+      const hub = nodeHub[idx];
+      const route = hubRoutes.get(hub);
+      if (!route) return { x: n.x, y: n.y };
+      const relX = n.x - cx;
+      const relY = n.y - cy;
+      const along = clamp(relX * route.ux + relY * route.uy, boundaryR * 0.22, boundaryR * 0.84);
+      // Quantized lanes keep branch merges visually tidy.
+      const laneSlots = 5;
+      const laneIdx = hash(n.memId + ':lane') % laneSlots;
+      const laneT = laneSlots <= 1 ? 0 : (laneIdx / (laneSlots - 1)) * 2 - 1;
+      const lane = laneT * boundaryR * 0.028;
+      return {
+        x: cx + route.ux * along + route.px * lane,
+        y: cy + route.uy * along + route.py * lane,
+      };
+    };
+
+    const bundlePaths: SubBundlePath[] = [];
+    for (const l of subRenderLinksRef.current) {
+      const sIdx = Number(l.source);
+      const tIdx = Number(l.target);
+      if (!Number.isFinite(sIdx) || !Number.isFinite(tIdx)) continue;
+      const s = simNodes[sIdx];
+      const t = simNodes[tIdx];
+      if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
+      const hs = nodeHub[sIdx];
+      const ht = nodeHub[tIdx];
+      const rs = hubRoutes.get(hs);
+      const rt = hubRoutes.get(ht);
+      if (!rs || !rt) continue;
+
+      const sb = branchPoint(sIdx);
+      const tb = branchPoint(tIdx);
+      const points: BundlePathPoint[] = [{ x: s.x, y: s.y }, sb];
+
+      if (hs === ht) {
+        points.push(rs.trunkOuter, tb, { x: t.x, y: t.y });
+      } else {
+        const jcDir = unitVec(rs.ux + rt.ux, rs.uy + rt.uy);
+        const lo = Math.min(hs, ht);
+        const hi = Math.max(hs, ht);
+        const pairKey = `${lo}|${hi}:j`;
+        const laneSlots = 3;
+        const laneIdx = hash(pairKey) % laneSlots;
+        const laneT = laneSlots <= 1 ? 0 : (laneIdx / (laneSlots - 1)) * 2 - 1;
+        const jLane = laneT * boundaryR * 0.03;
+        const jPerp = { x: -jcDir.y, y: jcDir.x };
+        const junction = {
+          x: cx + jcDir.x * boundaryR * 0.08 + jPerp.x * jLane,
+          y: cy + jcDir.y * boundaryR * 0.08 + jPerp.y * jLane,
+        };
+        points.push(rs.trunkOuter, rs.trunkMid, junction, rt.trunkMid, rt.trunkOuter, tb, { x: t.x, y: t.y });
+      }
+      const avgImp = ((s.importance || 0.3) + (t.importance || 0.3)) * 0.5;
+      const [sr, sg, sbc] = parseHexColor(s.color);
+      const [tr, tg, tbc] = parseHexColor(t.color);
+      const mixR = (sr + tr) * 0.5;
+      const mixG = (sg + tg) * 0.5;
+      const mixB = (sbc + tbc) * 0.5;
+      // Keep bundles dark and cool while still echoing endpoint hues.
+      const tone: [number, number, number] = [
+        clamp(mixR * 0.58 + 0.16, 0, 1),
+        clamp(mixG * 0.62 + 0.2, 0, 1),
+        clamp(mixB * 0.72 + 0.28, 0, 1),
+      ];
+      bundlePaths.push({
+        points,
+        similarity: l.similarity,
+        intensity: clamp(0.35 + l.similarity * 0.45 + avgImp * 0.35, 0.2, 1.2),
+        color: tone,
+      });
+    }
+    subBundlePathsRef.current = bundlePaths;
     markWebGLDirty();
 
     // Keep the first seeded frame as final layout (no sub-force simulation).
@@ -881,6 +1028,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     subNodesRef.current = [];
     subLinksRef.current = [];
     subRenderLinksRef.current = [];
+    subBundlePathsRef.current = [];
     markWebGLDirty();
     hoveredMemRef.current = null;
     expandInfoRef.current = null;
@@ -935,7 +1083,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
         const currentExpandedId = expandedClusterRef.current;
         const nodes = subNodesRef.current;
-        const edges = subRenderLinksRef.current;
         if (currentExpandedId == null || nodes.length === 0) return true;
 
         if (webglUploadedVersionRef.current !== webglDataVersionRef.current) {
@@ -955,50 +1102,12 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
             pointColor[i * 4 + 3] = 0.8 + imp * 0.2;
           }
 
-          const linePos = new Float32Array(edges.length * 4);
-          const lineColor = new Float32Array(edges.length * 8);
-          for (let i = 0; i < edges.length; i++) {
-            const link = edges[i];
-            const si = typeof link.source === 'number' ? link.source : -1;
-            const ti = typeof link.target === 'number' ? link.target : -1;
-            const s = si >= 0 ? nodes[si] : null;
-            const t = ti >= 0 ? nodes[ti] : null;
-            if (!s || !t) {
-              linePos[i * 4] = 0;
-              linePos[i * 4 + 1] = 0;
-              linePos[i * 4 + 2] = 0;
-              linePos[i * 4 + 3] = 0;
-              continue;
-            }
-            linePos[i * 4] = s.x || 0;
-            linePos[i * 4 + 1] = s.y || 0;
-            linePos[i * 4 + 2] = t.x || 0;
-            linePos[i * 4 + 3] = t.y || 0;
-            const impAvg = ((s.importance || 0.3) + (t.importance || 0.3)) * 0.5;
-            const sim = Math.max(0, Math.min(1, link.similarity));
-            const a = 0.02 + sim * 0.13 + impAvg * 0.09;
-            const r = 0.56 + sim * 0.22 + impAvg * 0.1;
-            const g = 0.68 + sim * 0.16 + impAvg * 0.1;
-            const b = 0.9 + sim * 0.08;
-            for (let k = 0; k < 2; k++) {
-              const base = i * 8 + k * 4;
-              lineColor[base] = Math.min(1, r);
-              lineColor[base + 1] = Math.min(1, g);
-              lineColor[base + 2] = Math.min(1, b);
-              lineColor[base + 3] = a;
-            }
-          }
-
           gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointPosBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, pointPos, gl.DYNAMIC_DRAW);
           gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointColorBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, pointColor, gl.DYNAMIC_DRAW);
           gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointImportanceBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, pointImportance, gl.DYNAMIC_DRAW);
-          gl.bindBuffer(gl.ARRAY_BUFFER, scene.linePosBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, linePos, gl.DYNAMIC_DRAW);
-          gl.bindBuffer(gl.ARRAY_BUFFER, scene.lineColorBuffer);
-          gl.bufferData(gl.ARRAY_BUFFER, lineColor, gl.DYNAMIC_DRAW);
           webglUploadedVersionRef.current = webglDataVersionRef.current;
         }
 
@@ -1007,19 +1116,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         const expand = expandInfoRef.current;
         const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, camNow.scale)) * 0.88;
         const pointPx = subNodeBaseScreenPx(viewMin, camNow.scale, boundaryWorldR, nodes.length);
-
-        if (edges.length > 0) {
-          gl.useProgram(scene.lineProgram);
-          gl.uniform3f(scene.lineCameraLoc, camNow.x, camNow.y, camNow.scale);
-          gl.uniform2f(scene.lineViewportLoc, vw, vh);
-          gl.bindBuffer(gl.ARRAY_BUFFER, scene.linePosBuffer);
-          gl.enableVertexAttribArray(scene.linePosLoc);
-          gl.vertexAttribPointer(scene.linePosLoc, 2, gl.FLOAT, false, 0, 0);
-          gl.bindBuffer(gl.ARRAY_BUFFER, scene.lineColorBuffer);
-          gl.enableVertexAttribArray(scene.lineColorLoc);
-          gl.vertexAttribPointer(scene.lineColorLoc, 4, gl.FLOAT, false, 0, 0);
-          gl.drawArrays(gl.LINES, 0, edges.length * 2);
-        }
 
         gl.useProgram(scene.pointProgram);
         gl.uniform3f(scene.pointCameraLoc, camNow.x, camNow.y, camNow.scale);
@@ -1232,22 +1328,42 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       }
       if (hasExpandedEdgeClip) ctx.restore();
 
-      // ── Sub-graph edges ──
-      if (!useWebGLSub && isExpMode && subNodesNow.length > 0) {
-        const subEdgesNow = subRenderLinksRef.current;
-        for (const link of subEdgesNow) {
-          const si = typeof link.source === 'number' ? link.source : (link.source as MemSubNode);
-          const ti = typeof link.target === 'number' ? link.target : (link.target as MemSubNode);
-          const s = typeof si === 'number' ? subNodesNow[si] : si;
-          const t = typeof ti === 'number' ? subNodesNow[ti] : ti;
-          if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
+      // ── Sub-graph bundled routes ──
+      if (isExpMode && subNodesNow.length > 0) {
+        const bundlePaths = subBundlePathsRef.current;
+        if (bundlePaths.length > 0) {
+          for (const path of bundlePaths) {
+            const width = (0.48 + path.intensity * 0.78) * invS;
+            const alpha = 0.012 + path.similarity * 0.045 + path.intensity * 0.028;
+            const [r, g, b] = path.color;
+            const r255 = Math.round(r * 255);
+            const g255 = Math.round(g * 255);
+            const b255 = Math.round(b * 255);
+            ctx.strokeStyle = `rgba(${r255},${g255},${b255},${alpha * 0.5})`;
+            ctx.lineWidth = width * 2.05;
+            drawSmoothBundle(ctx, path.points);
+            ctx.stroke();
 
-          ctx.beginPath();
-          ctx.moveTo(s.x, s.y);
-          ctx.lineTo(t.x, t.y);
-          ctx.strokeStyle = `rgba(200,220,255,${0.04 + link.similarity * 0.08})`;
-          ctx.lineWidth = 0.3 * invS;
-          ctx.stroke();
+            ctx.strokeStyle = `rgba(${r255},${g255},${b255},${alpha})`;
+            ctx.lineWidth = width;
+            drawSmoothBundle(ctx, path.points);
+            ctx.stroke();
+          }
+        } else if (!useWebGLSub) {
+          const subEdgesNow = subRenderLinksRef.current;
+          for (const link of subEdgesNow) {
+            const si = typeof link.source === 'number' ? link.source : (link.source as MemSubNode);
+            const ti = typeof link.target === 'number' ? link.target : (link.target as MemSubNode);
+            const s = typeof si === 'number' ? subNodesNow[si] : si;
+            const t = typeof ti === 'number' ? subNodesNow[ti] : ti;
+            if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
+            ctx.beginPath();
+            ctx.moveTo(s.x, s.y);
+            ctx.lineTo(t.x, t.y);
+            ctx.strokeStyle = `rgba(200,220,255,${0.04 + link.similarity * 0.08})`;
+            ctx.lineWidth = 0.3 * invS;
+            ctx.stroke();
+          }
         }
       }
 
