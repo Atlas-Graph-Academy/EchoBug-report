@@ -176,6 +176,7 @@ interface Props {
   memories: MemoryNode[];
   embeddingsData: EmbeddingsData;
   onMemoryClick: (memoryId: string) => void;
+  onClearFocus?: () => void;
   highlightedMemoryIds?: string[];
   sequenceMemoryIds?: string[];
 }
@@ -193,6 +194,7 @@ function sameIdList(a: string[] | undefined, b: string[] | undefined): boolean {
 
 function arePropsEqual(prev: Props, next: Props): boolean {
   if (prev.onMemoryClick !== next.onMemoryClick) return false;
+  if (prev.onClearFocus !== next.onClearFocus) return false;
   if (prev.embeddingsData !== next.embeddingsData) return false;
   if (!sameIdList(prev.highlightedMemoryIds, next.highlightedMemoryIds)) return false;
   if (!sameIdList(prev.sequenceMemoryIds, next.sequenceMemoryIds)) return false;
@@ -328,6 +330,7 @@ function ClusterGraph({
   memories,
   embeddingsData,
   onMemoryClick,
+  onClearFocus,
   highlightedMemoryIds = [],
   sequenceMemoryIds = [],
 }: Props) {
@@ -2235,7 +2238,14 @@ function ClusterGraph({
               return;
             }
           }
-          collapseCluster();
+          const hasFocus = highlightedMemoryIdsRef.current.length > 0;
+          if (hasFocus) {
+            onClearFocus?.();
+          } else {
+            collapseCluster();
+          }
+        } else {
+          onClearFocus?.();
         }
       } else if (hit.type === 'cluster') {
         const hitId = (hit.node as ClusterNode).id;
@@ -2270,7 +2280,7 @@ function ClusterGraph({
     mouseDownScreenRef.current = null;
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = 'grab';
-  }, [findNode, getWorldPos, expandCluster, collapseCluster, onMemoryClick]);
+  }, [findNode, getWorldPos, expandCluster, collapseCluster, onMemoryClick, onClearFocus]);
 
   const handleMouseLeave = useCallback(() => {
     freezeGestureRef.current = false;

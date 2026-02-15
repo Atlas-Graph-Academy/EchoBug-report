@@ -264,6 +264,7 @@ export default function MemoryPreviewCanvas() {
   const [selectedEmotion, setSelectedEmotion] = useState('All');
   const [selectedRecord, setSelectedRecord] = useState<DisplayMemoryRecord | null>(null);
   const [detailSource, setDetailSource] = useState<'stream' | 'constellation' | null>(null);
+  const [constellationFocusActive, setConstellationFocusActive] = useState(true);
   const [narrativeMemoryId, setNarrativeMemoryId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'stream' | 'constellation'>('constellation');
 
@@ -622,6 +623,7 @@ export default function MemoryPreviewCanvas() {
       glow: emotionStyle.glow,
     });
 
+    setConstellationFocusActive(true);
     setNarrativeMemoryId(nodeId);
   }, [sortedRecords]);
 
@@ -649,6 +651,7 @@ export default function MemoryPreviewCanvas() {
       glow: emotionStyle.glow,
     });
 
+    setConstellationFocusActive(true);
     setDetailSource('constellation');
     setNarrativeMemoryId(memoryId);
   }, [sortedRecords]);
@@ -657,6 +660,11 @@ export default function MemoryPreviewCanvas() {
     setSelectedRecord(null);
     setNarrativeMemoryId(null);
     setDetailSource(null);
+    setConstellationFocusActive(false);
+  }, []);
+
+  const clearConstellationFocus = useCallback(() => {
+    setConstellationFocusActive(false);
   }, []);
 
   const showConstellationDetail =
@@ -781,8 +789,13 @@ export default function MemoryPreviewCanvas() {
                 memories={memoryNodes}
                 embeddingsData={embeddingsData}
                 onMemoryClick={handleConstellationMemoryClick}
-                highlightedMemoryIds={showConstellationDetail ? (narrativeContext?.listedIds ?? []) : []}
-                sequenceMemoryIds={showConstellationDetail ? (narrativeContext?.primarySequenceIds ?? []) : []}
+                onClearFocus={clearConstellationFocus}
+                highlightedMemoryIds={
+                  showConstellationDetail && constellationFocusActive ? (narrativeContext?.listedIds ?? []) : []
+                }
+                sequenceMemoryIds={
+                  showConstellationDetail && constellationFocusActive ? (narrativeContext?.primarySequenceIds ?? []) : []
+                }
               />
             )
           )}
