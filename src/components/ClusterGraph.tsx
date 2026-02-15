@@ -266,14 +266,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const subRenderLinksRef = useRef<MemSubLink[]>([]);
   const hoveredNodeRef = useRef<number | null>(null);
   const hoveredMemRef = useRef<string | null>(null);
-  const panSnapshotRef = useRef<{
-    canvas: HTMLCanvasElement;
-    startCamX: number;
-    startCamY: number;
-    dpr: number;
-    vw: number;
-    vh: number;
-  } | null>(null);
   const canvasMetricsRef = useRef<{ vw: number; vh: number; dpr: number }>({ vw: 0, vh: 0, dpr: 0 });
   const rafRef = useRef<number | null>(null);
   const labelsRef = useRef<Map<number, string>>(new Map());
@@ -1031,30 +1023,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         return true;
       };
 
-      const drag = dragRef.current;
-      const panSnapshot = panSnapshotRef.current;
-      if (drag?.type === 'pan' && panSnapshot) {
-        // Fast path during pan: blit snapshot with camera delta instead of redrawing whole scene.
-        const bg = ctx.createLinearGradient(0, 0, vw, vh);
-        bg.addColorStop(0, '#070a14');
-        bg.addColorStop(1, '#080e1f');
-        ctx.fillStyle = bg;
-        ctx.fillRect(0, 0, vw, vh);
-
-        const dx = cameraRef.current.x - panSnapshot.startCamX;
-        const dy = cameraRef.current.y - panSnapshot.startCamY;
-        ctx.drawImage(
-          panSnapshot.canvas,
-          dx * (dpr / panSnapshot.dpr),
-          dy * (dpr / panSnapshot.dpr),
-          panSnapshot.vw * (dpr / panSnapshot.dpr),
-          panSnapshot.vh * (dpr / panSnapshot.dpr)
-        );
-        drawWebGLSubgraph();
-        rafRef.current = requestAnimationFrame(render);
-        return;
-      }
-
       // Background
       const bg = ctx.createLinearGradient(0, 0, vw, vh);
       bg.addColorStop(0, '#070a14');
@@ -1418,22 +1386,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       stopCameraAnim();
       dragRef.current = { type: 'pan' };
       panStartCamRef.current = { x: cameraRef.current.x, y: cameraRef.current.y };
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const snap = document.createElement('canvas');
-        snap.width = canvas.width;
-        snap.height = canvas.height;
-        const snapCtx = snap.getContext('2d');
-        if (snapCtx) snapCtx.drawImage(canvas, 0, 0);
-        panSnapshotRef.current = {
-          canvas: snap,
-          startCamX: cameraRef.current.x,
-          startCamY: cameraRef.current.y,
-          dpr: canvasMetricsRef.current.dpr || Math.max(1, window.devicePixelRatio || 1),
-          vw: canvasMetricsRef.current.vw || canvas.clientWidth,
-          vh: canvasMetricsRef.current.vh || canvas.clientHeight,
-        };
-      }
     }
   }, [findNode, getWorldPos, stopCameraAnim]);
 
@@ -1520,7 +1472,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
     dragRef.current = null;
     mouseDownScreenRef.current = null;
-    panSnapshotRef.current = null;
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = 'grab';
   }, [findNode, getWorldPos, expandCluster, collapseCluster, onMemoryClick]);
@@ -1538,7 +1489,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       dragRef.current = null;
       mouseDownScreenRef.current = null;
     }
-    panSnapshotRef.current = null;
     hoveredNodeRef.current = null;
     hoveredMemRef.current = null;
   }, []);
