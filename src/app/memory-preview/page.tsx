@@ -5,12 +5,13 @@ import { useRouter } from 'next/navigation';
 import MemoryPreviewCanvas from '@/components/MemoryPreviewCanvas';
 
 const MEMORY_PASSWORD = '888';
+const PASSWORD_GATE_ENABLED = false;
 
 export default function MemoryPreviewPage() {
   const router = useRouter();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(!PASSWORD_GATE_ENABLED);
 
   const handleUnlock = useCallback(() => {
     if (password.trim() !== MEMORY_PASSWORD) {
@@ -22,7 +23,7 @@ export default function MemoryPreviewPage() {
     setIsUnlocked(true);
   }, [password]);
 
-  if (!isUnlocked) {
+  if (PASSWORD_GATE_ENABLED && !isUnlocked) {
     return (
       <div className="memory-gate-screen">
         <div className="memory-gate-card">

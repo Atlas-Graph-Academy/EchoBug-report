@@ -93,6 +93,12 @@ function forceBoundary(cx: number, cy: number, maxR: number) {
     }
   }
 
+  (force as unknown as { center: (x: number, y: number) => unknown }).center = (x: number, y: number) => {
+    cx = x;
+    cy = y;
+    return force;
+  };
+
   force.initialize = (_nodes: MemSubNode[]) => { nodes = _nodes; };
   return force;
 }
@@ -126,6 +132,7 @@ interface MemSubLink extends SimulationLinkDatum<MemSubNode> {
 }
 
 interface ExpandInfo {
+  clusterId: number;
   cx: number;
   cy: number;
   boundaryR: number;
@@ -144,9 +151,20 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const simRef = useRef<ReturnType<typeof forceSimulation<ClusterNode>> | null>(null);
   const simNodesRef = useRef<ClusterNode[]>([]);
   const subSimRef = useRef<ReturnType<typeof forceSimulation<MemSubNode>> | null>(null);
+  const clusterNodesRef = useRef<ClusterNode[]>([]);
+  const clusterLinksRef = useRef<ClusterLink[]>([]);
+  const subNodesRef = useRef<MemSubNode[]>([]);
+  const subLinksRef = useRef<MemSubLink[]>([]);
+  const subRenderLinksRef = useRef<MemSubLink[]>([]);
+  const hoveredNodeRef = useRef<number | null>(null);
+  const hoveredMemRef = useRef<string | null>(null);
   const rafRef = useRef<number | null>(null);
   const labelsRef = useRef<Map<number, string>>(new Map());
   const expandInfoRef = useRef<ExpandInfo | null>(null);
+  const expandedClusterRef = useRef<number | null>(null);
+  const subTickLastCommitRef = useRef<number>(0);
+  const expandBuildTokenRef = useRef<number>(0);
+  const subSimStartTimerRef = useRef<number | null>(null);
 
   // Camera
   const cameraRef = useRef<Camera>({ x: 0, y: 0, scale: 1 });
@@ -158,10 +176,10 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
   const [clusterLinks, setClusterLinks] = useState<ClusterLink[]>([]);
   const [expandedCluster, setExpandedCluster] = useState<number | null>(null);
-  const [subNodes, setSubNodes] = useState<MemSubNode[]>([]);
-  const [subLinks, setSubLinks] = useState<MemSubLink[]>([]);
-  const [hoveredNode, setHoveredNode] = useState<number | null>(null);
-  const [hoveredMem, setHoveredMem] = useState<string | null>(null);
+
+  useEffect(() => {
+    expandedClusterRef.current = expandedCluster;
+  }, [expandedCluster]);
 
   // Interaction refs
   const dragRef = useRef<{ type: 'cluster' | 'mem' | 'pan'; id?: number | string } | null>(null);
@@ -241,6 +259,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       };
     });
     const links: ClusterLink[] = edges.map((e) => ({ source: e.source, target: e.target, weight: e.weight }));
+    clusterNodesRef.current = nodes;
+    clusterLinksRef.current = links;
     setClusterNodes(nodes);
     setClusterLinks(links);
     if (!hasCache) fetchClusterNames(clusters);
@@ -329,7 +349,41 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     sim.on('tick', () => {
       const labels = labelsRef.current;
       if (labels.size > 0) { for (const n of simNodes) { const lbl = labels.get(n.id); if (lbl) n.label = lbl; } }
-      setClusterNodes([...simNodes]);
+
+      // Keep expanded sub-graph rigidly attached to its parent cluster.
+      const expand = expandInfoRef.current;
+      const currentExpandedId = expandedClusterRef.current;
+      if (expand && currentExpandedId !== null && expand.clusterId === currentExpandedId && subSimRef.current) {
+        const parent = simNodes.find((n) => n.id === currentExpandedId);
+        if (parent && parent.x != null && parent.y != null) {
+          const dx = parent.x - expand.cx;
+          const dy = parent.y - expand.cy;
+          if (Math.abs(dx) > 1e-6 || Math.abs(dy) > 1e-6) {
+            const subSim = subSimRef.current;
+            const subSimNodes = subSim.nodes() as MemSubNode[];
+            for (const n of subSimNodes) {
+              if (n.x != null) n.x += dx;
+              if (n.y != null) n.y += dy;
+              if (n.fx != null) n.fx += dx;
+              if (n.fy != null) n.fy += dy;
+            }
+
+            const centerForce = subSim.force('center') as { x?: (v: number) => unknown; y?: (v: number) => unknown } | null;
+            if (centerForce?.x) centerForce.x(parent.x);
+            if (centerForce?.y) centerForce.y(parent.y);
+
+            const boundaryForce = subSim.force('boundary') as
+              | { center?: (x: number, y: number) => unknown }
+              | null;
+            if (boundaryForce?.center) boundaryForce.center(parent.x, parent.y);
+
+            expand.cx = parent.x;
+            expand.cy = parent.y;
+            subNodesRef.current = subSimNodes;
+          }
+        }
+      }
+      clusterNodesRef.current = simNodes;
     });
     return () => { sim.stop(); simRef.current = null; };
   }, [clusterNodes.length, clusterLinks.length]);
@@ -338,8 +392,13 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const expandCluster = useCallback((clusterId: number) => {
     if (expandedCluster === clusterId) { collapseCluster(); return; }
     if (subSimRef.current) subSimRef.current.stop();
+    subSimRef.current = null;
+    if (subSimStartTimerRef.current !== null) {
+      window.clearTimeout(subSimStartTimerRef.current);
+      subSimStartTimerRef.current = null;
+    }
 
-    const cluster = clusterNodes.find((n) => n.id === clusterId);
+    const cluster = clusterNodesRef.current.find((n) => n.id === clusterId);
     if (!cluster || cluster.x == null || cluster.y == null) return;
 
     const container = containerRef.current;
@@ -349,6 +408,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     const viewMin = Math.min(vw, vh);
 
     setExpandedCluster(clusterId);
+    const buildToken = ++expandBuildTokenRef.current;
 
     const memberCount = cluster.memberIds.length;
     const clusterR = cluster.radius;
@@ -365,7 +425,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     // Collide: center-to-center >= 4 * nodeWorldR → gap between edges >= 2 * nodeWorldR = 1 diameter
     const collideR = nodeWorldR * 2;
 
-    expandInfoRef.current = { cx, cy, boundaryR: clusterR, nodeWorldR };
+    expandInfoRef.current = { clusterId, cx, cy, boundaryR: clusterR, nodeWorldR };
 
     animateCamera({
       x: vw / 2 - cx * zoomScale,
@@ -376,11 +436,13 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     // Build sub-nodes
     const memberIds = cluster.memberIds;
     const memberSet = new Set(memberIds);
+    const idxByMemId = new Map<string, number>();
 
     const nodes: MemSubNode[] = memberIds.map((id) => {
       const mem = memById.get(id);
       const emotion = mem?.emotion || 'Unknown';
       const style = eStyle(emotion);
+      idxByMemId.set(id, idxByMemId.size);
       return {
         memId: id,
         label: (mem?.text || id).slice(0, 30),
@@ -388,27 +450,31 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       };
     });
 
-    const links: MemSubLink[] = [];
+    let links: MemSubLink[] = [];
     const seen = new Set<string>();
+    const similarityThreshold = memberCount > 320 ? 0.4 : memberCount > 180 ? 0.35 : 0.3;
+    const maxNeighborsPerNode = memberCount > 320 ? 6 : memberCount > 180 ? 8 : 12;
     for (const id of memberIds) {
       const neighbors = embeddingsData.neighbors[id] || [];
+      let accepted = 0;
       for (const n of neighbors) {
+        if (accepted >= maxNeighborsPerNode) break;
         if (!memberSet.has(n.id)) continue;
-        const key = id < n.id ? `${id}-${n.id}` : `${n.id}-${id}`;
+        if (n.similarity < similarityThreshold) continue;
+        const key = id < n.id ? `${id}|${n.id}` : `${n.id}|${id}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        if (n.similarity >= 0.3) {
-          links.push({
-            source: nodes.findIndex((nn) => nn.memId === id),
-            target: nodes.findIndex((nn) => nn.memId === n.id),
-            similarity: n.similarity,
-          });
-        }
+        const source = idxByMemId.get(id);
+        const target = idxByMemId.get(n.id);
+        if (source == null || target == null) continue;
+        links.push({ source, target, similarity: n.similarity });
+        accepted += 1;
       }
     }
-
-    setSubNodes(nodes);
-    setSubLinks(links);
+    const edgeBudget = memberCount > 320 ? memberCount * 3 : memberCount > 180 ? memberCount * 4 : memberCount * 6;
+    if (links.length > edgeBudget) {
+      links = links.sort((a, b) => b.similarity - a.similarity).slice(0, edgeBudget);
+    }
 
     // ── Sub-force simulation ──
     const boundaryR = clusterR * 0.88; // keep inside the dashed circle
@@ -422,38 +488,62 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       n.y = cy + Math.sin(angle) * r;
     }
 
-    const sim = forceSimulation<MemSubNode>(simNodes)
-      .force('link', forceLink<MemSubNode, MemSubLink>(links as MemSubLink[])
-        .distance(collideR * 3).strength((l) => (l as MemSubLink).similarity * 0.3))
-      .force('charge', forceManyBody<MemSubNode>().strength(-collideR * 8))
-      .force('center', forceCenter(cx, cy).strength(0.05))
-      .force('collide', forceCollide<MemSubNode>().radius(collideR).strength(1))
-      .force('boundary', forceBoundary(cx, cy, boundaryR) as unknown as ReturnType<typeof forceManyBody>)
-      .alphaDecay(0.02);
+    // Paint seeded positions immediately, then start simulation after zoom settles.
+    subNodesRef.current = simNodes;
+    subLinksRef.current = links;
+    if (simNodes.length > 60) {
+      const sorted = [...links].sort((a, b) => b.similarity - a.similarity);
+      subRenderLinksRef.current = sorted.slice(0, Math.min(sorted.length, simNodes.length * 2));
+    } else {
+      subRenderLinksRef.current = links;
+    }
 
-    subSimRef.current = sim;
-    sim.on('tick', () => {
-      // Hard clamp as safety net (soft force should keep most nodes inside)
-      for (const n of simNodes) {
-        if (n.x == null || n.y == null) continue;
-        const dx = n.x - cx;
-        const dy = n.y - cy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > boundaryR) {
-          n.x = cx + (dx / dist) * boundaryR;
-          n.y = cy + (dy / dist) * boundaryR;
+    subSimStartTimerRef.current = window.setTimeout(() => {
+      if (expandBuildTokenRef.current !== buildToken || expandedClusterRef.current !== clusterId) return;
+      const sim = forceSimulation<MemSubNode>(simNodes)
+        .force('link', forceLink<MemSubNode, MemSubLink>(links as MemSubLink[])
+          .distance(collideR * 3).strength((l) => (l as MemSubLink).similarity * 0.28))
+        .force('charge', forceManyBody<MemSubNode>().strength(-collideR * 7))
+        .force('center', forceCenter(cx, cy).strength(0.05))
+        .force('collide', forceCollide<MemSubNode>().radius(collideR).strength(1))
+        .force('boundary', forceBoundary(cx, cy, boundaryR) as unknown as ReturnType<typeof forceManyBody>)
+        .alphaDecay(memberCount > 320 ? 0.03 : 0.02);
+
+      subSimRef.current = sim;
+      subTickLastCommitRef.current = 0;
+      sim.on('tick', () => {
+        // Hard clamp as safety net (soft force should keep most nodes inside)
+        for (const n of simNodes) {
+          if (n.x == null || n.y == null) continue;
+          const dx = n.x - cx;
+          const dy = n.y - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > boundaryR) {
+            n.x = cx + (dx / dist) * boundaryR;
+            n.y = cy + (dy / dist) * boundaryR;
+          }
         }
-      }
-      setSubNodes([...simNodes]);
-    });
-  }, [clusterNodes, expandedCluster, embeddingsData, memById, animateCamera]);
+        const now = performance.now();
+        if (now - subTickLastCommitRef.current >= 33 || sim.alpha() < 0.05) {
+          subTickLastCommitRef.current = now;
+          subNodesRef.current = [...simNodes];
+        }
+      });
+    }, memberCount > 260 ? 220 : 80);
+  }, [expandedCluster, embeddingsData, memById, animateCamera]);
 
   const collapseCluster = useCallback(() => {
     if (subSimRef.current) subSimRef.current.stop();
     subSimRef.current = null;
+    if (subSimStartTimerRef.current !== null) {
+      window.clearTimeout(subSimStartTimerRef.current);
+      subSimStartTimerRef.current = null;
+    }
     setExpandedCluster(null);
-    setSubNodes([]);
-    setSubLinks([]);
+    subNodesRef.current = [];
+    subLinksRef.current = [];
+    subRenderLinksRef.current = [];
+    hoveredMemRef.current = null;
     expandInfoRef.current = null;
     animateCamera({ x: 0, y: 0, scale: 1 }, 400);
   }, [animateCamera]);
@@ -503,14 +593,23 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       ctx.translate(cam.x, cam.y);
       ctx.scale(cam.scale, cam.scale);
 
-      const isExpMode = expandedCluster !== null;
+      const currentExpandedId = expandedClusterRef.current;
+      const isExpMode = currentExpandedId !== null;
       const invS = 1 / cam.scale;
       const viewMin = Math.min(vw, vh);
+      const clusterNodesNow = clusterNodesRef.current;
+      const clusterLinksNow = clusterLinksRef.current;
+      const subNodesNow = subNodesRef.current;
+      const subEdgesNow = subRenderLinksRef.current;
+      const hoveredNode = hoveredNodeRef.current;
+      const hoveredMem = hoveredMemRef.current;
+      const clusterById = new Map<number, ClusterNode>();
+      for (const n of clusterNodesNow) clusterById.set(n.id, n);
 
       // ── Cluster edges ──
-      for (const link of clusterLinks) {
-        const s = typeof link.source === 'object' ? link.source : clusterNodes.find((n) => n.id === link.source);
-        const t = typeof link.target === 'object' ? link.target : clusterNodes.find((n) => n.id === link.target);
+      for (const link of clusterLinksNow) {
+        const s = typeof link.source === 'object' ? link.source : clusterById.get(Number(link.source));
+        const t = typeof link.target === 'object' ? link.target : clusterById.get(Number(link.target));
         if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
 
         const mx = (s.x + t.x) / 2;
@@ -521,8 +620,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         const cpy = my + dx * 0.15;
 
         const connectsExpanded = isExpMode && (
-          (typeof link.source === 'object' ? (link.source as ClusterNode).id : link.source) === expandedCluster ||
-          (typeof link.target === 'object' ? (link.target as ClusterNode).id : link.target) === expandedCluster
+          (typeof link.source === 'object' ? (link.source as ClusterNode).id : link.source) === currentExpandedId ||
+          (typeof link.target === 'object' ? (link.target as ClusterNode).id : link.target) === currentExpandedId
         );
 
         ctx.beginPath();
@@ -536,18 +635,12 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       }
 
       // ── Sub-graph edges ──
-      if (isExpMode && subNodes.length > 0) {
-        let edgesToDraw = subLinks;
-        if (subNodes.length > 60) {
-          const sorted = [...subLinks].sort((a, b) => b.similarity - a.similarity);
-          edgesToDraw = sorted.slice(0, Math.min(sorted.length, subNodes.length * 2));
-        }
-
-        for (const link of edgesToDraw) {
+      if (isExpMode && subNodesNow.length > 0) {
+        for (const link of subEdgesNow) {
           const si = typeof link.source === 'number' ? link.source : (link.source as MemSubNode);
           const ti = typeof link.target === 'number' ? link.target : (link.target as MemSubNode);
-          const s = typeof si === 'number' ? subNodes[si] : si;
-          const t = typeof ti === 'number' ? subNodes[ti] : ti;
+          const s = typeof si === 'number' ? subNodesNow[si] : si;
+          const t = typeof ti === 'number' ? subNodesNow[ti] : ti;
           if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
 
           ctx.beginPath();
@@ -560,9 +653,9 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       }
 
       // ── Cluster nodes ──
-      for (const node of clusterNodes) {
+      for (const node of clusterNodesNow) {
         if (node.x == null || node.y == null) continue;
-        const isExpanded = expandedCluster === node.id;
+        const isExpanded = currentExpandedId === node.id;
         const isHovered = hoveredNode === node.id;
         const dimmed = isExpMode && !isExpanded;
         const alpha = dimmed ? 0.12 : 1;
@@ -620,7 +713,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         const nodeScreenR = viewMin * 0.0025;
         const nodeWorldR = nodeScreenR * invS;
 
-        for (const sn of subNodes) {
+        for (const sn of subNodesNow) {
           if (sn.x == null || sn.y == null) continue;
           const isHov = hoveredMem === sn.memId;
           const r = isHov ? nodeWorldR * 1.8 : nodeWorldR;
@@ -662,7 +755,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
     rafRef.current = requestAnimationFrame(render);
     return () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); };
-  }, [clusterNodes, clusterLinks, subNodes, subLinks, expandedCluster, hoveredNode, hoveredMem]);
+  }, []);
 
   // Resize
   useEffect(() => {
@@ -720,22 +813,22 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
   const findNode = useCallback(
     (wx: number, wy: number): { type: 'cluster' | 'mem'; node: ClusterNode | MemSubNode } | null => {
-      if (expandedCluster !== null) {
-        for (const sn of subNodes) {
+      if (expandedClusterRef.current !== null) {
+        for (const sn of subNodesRef.current) {
           if (sn.x == null || sn.y == null) continue;
           const dx = wx - sn.x; const dy = wy - sn.y;
           const hitR = 8 / cameraRef.current.scale + 4;
           if (dx * dx + dy * dy < hitR * hitR) return { type: 'mem', node: sn };
         }
       }
-      for (const cn of clusterNodes) {
+      for (const cn of clusterNodesRef.current) {
         if (cn.x == null || cn.y == null) continue;
         const dx = wx - cn.x; const dy = wy - cn.y;
         if (dx * dx + dy * dy < cn.radius * cn.radius) return { type: 'cluster', node: cn };
       }
       return null;
     },
-    [clusterNodes, subNodes, expandedCluster]
+    []
   );
 
   const getWorldPos = useCallback((e: React.MouseEvent | MouseEvent) => {
@@ -788,10 +881,10 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
       const { x, y } = getWorldPos(e);
       if (drag.type === 'cluster') {
-        const node = clusterNodes.find((n) => n.id === drag.id);
+        const node = clusterNodesRef.current.find((n) => n.id === drag.id);
         if (node && simRef.current) { node.fx = x; node.fy = y; simRef.current.alpha(0.3).restart(); }
       } else if (drag.type === 'mem') {
-        const node = subNodes.find((n) => n.memId === drag.id);
+        const node = subNodesRef.current.find((n) => n.memId === drag.id);
         if (node && subSimRef.current) { node.fx = x; node.fy = y; subSimRef.current.alpha(0.3).restart(); }
       }
       return;
@@ -802,20 +895,27 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = hit ? 'pointer' : 'grab';
 
-    if (hit?.type === 'cluster') { setHoveredNode((hit.node as ClusterNode).id); setHoveredMem(null); }
-    else if (hit?.type === 'mem') { setHoveredMem((hit.node as MemSubNode).memId); setHoveredNode(null); }
-    else { setHoveredNode(null); setHoveredMem(null); }
-  }, [clusterNodes, subNodes, findNode, getWorldPos]);
+    if (hit?.type === 'cluster') {
+      hoveredNodeRef.current = (hit.node as ClusterNode).id;
+      hoveredMemRef.current = null;
+    } else if (hit?.type === 'mem') {
+      hoveredMemRef.current = (hit.node as MemSubNode).memId;
+      hoveredNodeRef.current = null;
+    } else {
+      hoveredNodeRef.current = null;
+      hoveredMemRef.current = null;
+    }
+  }, [findNode, getWorldPos]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     const drag = dragRef.current;
     if (!drag) return;
 
     if (drag.type === 'cluster') {
-      const node = clusterNodes.find((n) => n.id === drag.id);
+      const node = clusterNodesRef.current.find((n) => n.id === drag.id);
       if (node) { node.fx = null; node.fy = null; }
     } else if (drag.type === 'mem') {
-      const node = subNodes.find((n) => n.memId === drag.id);
+      const node = subNodesRef.current.find((n) => n.memId === drag.id);
       if (node) { node.fx = null; node.fy = null; }
     }
 
@@ -829,7 +929,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const hit = findNode(x, y);
 
       if (!hit) {
-        if (expandedCluster !== null) collapseCluster();
+        if (expandedClusterRef.current !== null) collapseCluster();
       } else if (hit.type === 'cluster') {
         expandCluster((hit.node as ClusterNode).id);
       } else {
@@ -841,24 +941,32 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     mouseDownScreenRef.current = null;
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = 'grab';
-  }, [clusterNodes, subNodes, findNode, getWorldPos, expandCluster, collapseCluster, expandedCluster, onMemoryClick]);
+  }, [findNode, getWorldPos, expandCluster, collapseCluster, onMemoryClick]);
 
   const handleMouseLeave = useCallback(() => {
     const drag = dragRef.current;
     if (drag) {
       if (drag.type === 'cluster') {
-        const node = clusterNodes.find((n) => n.id === drag.id);
+        const node = clusterNodesRef.current.find((n) => n.id === drag.id);
         if (node) { node.fx = null; node.fy = null; }
       } else if (drag.type === 'mem') {
-        const node = subNodes.find((n) => n.memId === drag.id);
+        const node = subNodesRef.current.find((n) => n.memId === drag.id);
         if (node) { node.fx = null; node.fy = null; }
       }
       dragRef.current = null;
       mouseDownScreenRef.current = null;
     }
-    setHoveredNode(null);
-    setHoveredMem(null);
-  }, [clusterNodes, subNodes]);
+    hoveredNodeRef.current = null;
+    hoveredMemRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (subSimStartTimerRef.current !== null) {
+        window.clearTimeout(subSimStartTimerRef.current);
+      }
+    };
+  }, []);
 
   if (memories.length === 0) {
     return <div className="memory-status">No memory data for constellation view</div>;

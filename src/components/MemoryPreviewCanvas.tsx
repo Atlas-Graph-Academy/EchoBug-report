@@ -264,7 +264,7 @@ export default function MemoryPreviewCanvas() {
   const [selectedEmotion, setSelectedEmotion] = useState('All');
   const [selectedRecord, setSelectedRecord] = useState<DisplayMemoryRecord | null>(null);
   const [narrativeMemoryId, setNarrativeMemoryId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'stream' | 'constellation'>('stream');
+  const [viewMode, setViewMode] = useState<'stream' | 'constellation'>('constellation');
 
   useEffect(() => {
     const load = async () => {
