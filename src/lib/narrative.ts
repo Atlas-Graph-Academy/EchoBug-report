@@ -12,6 +12,7 @@
 
 export interface MemoryNode {
   id: string;
+  key: string;
   text: string;
   createdAt: string;
   object: string;

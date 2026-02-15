@@ -500,6 +500,7 @@ export default function MemoryPreviewCanvas() {
   const memoryNodes = useMemo<MemoryNode[]>(() => {
     return sortedRecords.map(record => ({
       id: record.id,
+      key: normalizeValue(record.object || record.id),
       text: record.description || record.object,
       createdAt: record.createdAt || record.time,
       object: normalizeValue(record.object),

@@ -230,6 +230,28 @@ function createProgram(gl: WebGLRenderingContext, vsSrc: string, fsSrc: string):
   return p;
 }
 
+function roundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+}
+
 export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -669,7 +691,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       idxByMemId.set(id, idxByMemId.size);
       return {
         memId: id,
-        label: (mem?.text || id).slice(0, 30),
+        label: (mem?.key || id).slice(0, 30),
         color: style.color, glow: style.glow, emotion,
         importance: 0.3,
         targetR: clusterR * 0.5,
@@ -1069,6 +1091,58 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const hoveredMem = hoveredMemRef.current;
       const clusterById = new Map<number, ClusterNode>();
       for (const n of clusterNodesNow) clusterById.set(n.id, n);
+      const worldLeft = -cam.x * invS;
+      const worldTop = -cam.y * invS;
+      const worldRight = (vw - cam.x) * invS;
+      const worldBottom = (vh - cam.y) * invS;
+      const truncateLabel = (text: string, maxChars = 28) => (
+        text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 1))}\u2026`
+      );
+      const drawMemHoverLabel = (sn: MemSubNode, anchorR: number) => {
+        if (sn.x == null || sn.y == null) return;
+        const txt = truncateLabel(sn.label || sn.memId, 28);
+        const fs = 12 * invS;
+        const px = 7 * invS;
+        const py = 4 * invS;
+        const radius = 7 * invS;
+        const yGap = 8 * invS;
+
+        ctx.save();
+        ctx.font = `600 ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const tw = ctx.measureText(txt).width;
+        const bw = tw + px * 2;
+        const bh = fs + py * 2;
+
+        const minX = worldLeft + bw / 2 + 6 * invS;
+        const maxX = worldRight - bw / 2 - 6 * invS;
+        const cx = Math.max(minX, Math.min(maxX, sn.x));
+
+        let by = sn.y - anchorR - yGap - bh;
+        if (by < worldTop + 4 * invS) {
+          by = sn.y + anchorR + yGap;
+        }
+        if (by + bh > worldBottom - 4 * invS) {
+          by = worldBottom - 4 * invS - bh;
+        }
+
+        ctx.shadowBlur = 10 * invS;
+        ctx.shadowColor = 'rgba(12,18,32,0.45)';
+        ctx.fillStyle = 'rgba(10,16,30,0.93)';
+        roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(195,220,255,0.5)';
+        ctx.lineWidth = Math.max(0.8 * invS, 0.8 / cam.scale);
+        roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
+        ctx.stroke();
+
+        ctx.fillStyle = '#f3f9ff';
+        ctx.fillText(txt, cx, by + bh / 2 + 0.2 * invS);
+        ctx.restore();
+      };
 
       // ── Cluster edges ──
       for (const link of clusterLinksNow) {
@@ -1178,6 +1252,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, cam.scale)) * 0.88;
         const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
         const nodeWorldR = nodeScreenR * invS;
+        let hoveredNodeObj: MemSubNode | null = null;
+        let hoveredNodeR = 0;
 
         for (const sn of subNodesNow) {
           if (sn.x == null || sn.y == null) continue;
@@ -1194,24 +1270,13 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           ctx.globalAlpha = 0.9;
           ctx.fill();
           ctx.restore();
-
-          // Tooltip on hover
           if (isHov) {
-            ctx.save();
-            const fs = 11 * invS;
-            ctx.font = `500 ${fs}px "Avenir Next", sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            const txt = sn.label;
-            const tw = ctx.measureText(txt).width;
-            const px = 4 * invS;
-            const py = 2 * invS;
-            ctx.fillStyle = 'rgba(8,14,31,0.85)';
-            ctx.fillRect(sn.x - tw / 2 - px, sn.y - r - 14 * invS - py, tw + px * 2, 12 * invS + py * 2);
-            ctx.fillStyle = '#f0f7ff';
-            ctx.fillText(txt, sn.x, sn.y - r - 4 * invS);
-            ctx.restore();
+            hoveredNodeObj = sn;
+            hoveredNodeR = r;
           }
+        }
+        if (hoveredNodeObj) {
+          drawMemHoverLabel(hoveredNodeObj, hoveredNodeR);
         }
       }
 
@@ -1222,21 +1287,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, cam.scale)) * 0.88;
           const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
           const nodeWorldR = nodeScreenR * invS;
-          const r = nodeWorldR * 1.8;
-          ctx.save();
-          const fs = 11 * invS;
-          ctx.font = `500 ${fs}px "Avenir Next", sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'bottom';
-          const txt = sn.label;
-          const tw = ctx.measureText(txt).width;
-          const px = 4 * invS;
-          const py = 2 * invS;
-          ctx.fillStyle = 'rgba(8,14,31,0.85)';
-          ctx.fillRect(sn.x - tw / 2 - px, sn.y - r - 14 * invS - py, tw + px * 2, 12 * invS + py * 2);
-          ctx.fillStyle = '#f0f7ff';
-          ctx.fillText(txt, sn.x, sn.y - r - 4 * invS);
-          ctx.restore();
+          const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
+          drawMemHoverLabel(sn, baseR * 1.35);
         }
       }
 
@@ -1312,11 +1364,22 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         const expand = expandInfoRef.current;
         const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, camScale)) * 0.88;
         const nodeScreenBase = subNodeBaseScreenPx(viewMin, camScale, boundaryWorldR, subNodesRef.current.length);
+        let bestHit: MemSubNode | null = null;
+        let bestDist = Number.POSITIVE_INFINITY;
+        const hitPaddingPx = 4;
         for (const sn of subNodesRef.current) {
           if (sn.x == null || sn.y == null) continue;
           const dx = wx - sn.x; const dy = wy - sn.y;
-          const hitR = (nodeScreenBase * (0.72 + (sn.importance || 0) * 0.95)) / camScale + 5;
-          if (dx * dx + dy * dy < hitR * hitR) return { type: 'mem', node: sn };
+          const nodeScreenR = nodeScreenBase * (0.75 + (sn.importance || 0) * 1.3);
+          const hitR = (nodeScreenR + hitPaddingPx) / camScale;
+          const dist2 = dx * dx + dy * dy;
+          if (dist2 <= hitR * hitR && dist2 < bestDist) {
+            bestHit = sn;
+            bestDist = dist2;
+          }
+        }
+        if (bestHit) {
+          return { type: 'mem', node: bestHit };
         }
       }
       for (const cn of clusterNodesRef.current) {
