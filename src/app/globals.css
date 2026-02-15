@@ -267,6 +267,14 @@ main {
   color: #fff;
 }
 .btn-secondary:hover { background: #1a4a8a; }
+.btn-memory {
+  background: #0f766e;
+  color: #eafffb;
+}
+.btn-memory:hover { background: #0d9488; }
+.action-bar-triple .action-btn {
+  max-width: none;
+}
 
 /* Hidden file inputs */
 .hidden-input { display: none; }
@@ -618,6 +626,175 @@ main {
   text-decoration: none;
 }
 .success-link:hover { text-decoration: underline; }
+
+/* ── Memory Password Modal ── */
+.memory-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background: rgba(5, 8, 20, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.memory-modal {
+  width: min(420px, 100%);
+  background: #11203e;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 16px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.memory-modal h2 {
+  font-size: 22px;
+  font-weight: 700;
+}
+.memory-modal p {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.memory-modal input,
+.memory-gate-card input {
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(10,20,45,0.7);
+  color: var(--text);
+  padding: 0 12px;
+  outline: none;
+}
+.memory-modal input:focus,
+.memory-gate-card input:focus {
+  border-color: #2dd4bf;
+}
+.memory-modal-actions,
+.memory-gate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.memory-submit-btn,
+.memory-cancel-btn {
+  border: none;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.memory-submit-btn {
+  background: #14b8a6;
+  color: #072427;
+}
+.memory-submit-btn:hover { background: #2dd4bf; }
+.memory-cancel-btn {
+  background: rgba(255,255,255,0.08);
+  color: var(--text);
+}
+.memory-cancel-btn:hover { background: rgba(255,255,255,0.14); }
+.memory-modal-error {
+  color: #fda4af;
+  font-size: 13px;
+}
+
+/* ── Memory Preview Page ── */
+.memory-page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at 15% 10%, #173c57, #080d1f 58%);
+}
+.memory-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.memory-page-header h1 {
+  font-size: 20px;
+  font-weight: 700;
+}
+.memory-gate-screen {
+  min-height: 100dvh;
+  background: radial-gradient(circle at 20% 20%, #163a56, #090f21 60%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.memory-gate-card {
+  width: min(460px, 100%);
+  background: rgba(14, 25, 50, 0.95);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.memory-gate-card h1 {
+  font-size: 26px;
+  font-weight: 700;
+}
+.memory-gate-card p {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.memory-canvas-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.memory-canvas-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+}
+.memory-canvas-meta h2 {
+  font-size: 18px;
+  font-weight: 650;
+}
+.memory-canvas-meta span {
+  font-size: 13px;
+  color: #b4d5e2;
+}
+.memory-canvas-scroll {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+}
+.memory-canvas-spacer {
+  width: 1px;
+}
+.memory-canvas {
+  position: sticky;
+  top: 0;
+  left: 0;
+  display: block;
+}
+.memory-status {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  color: #b3d4df;
+  padding: 20px;
+}
+.memory-error {
+  color: #fecaca;
+}
 .success-dismiss {
   font-size: 13px;
   color: var(--text-dim);

@@ -1,5 +1,19 @@
 const LINEAR_CLIENT_ID = process.env.NEXT_PUBLIC_LINEAR_CLIENT_ID!;
-const REDIRECT_URI = process.env.NEXT_PUBLIC_REDIRECT_URI!;
+
+// Auto-detect redirect URI based on environment
+function getRedirectURI(): string {
+  if (typeof window === 'undefined') {
+    // Server-side: use env var
+    return process.env.NEXT_PUBLIC_REDIRECT_URI!;
+  }
+  // Client-side: detect localhost vs production
+  const { protocol, hostname, port } = window.location;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return `${protocol}//${hostname}:${port}/`;
+  }
+  return process.env.NEXT_PUBLIC_REDIRECT_URI!;
+}
+
 const LINEAR_AUTH_URL = 'https://linear.app/oauth/authorize';
 const LINEAR_SCOPES = 'read,write,issues:create';
 const SCOPE_VERSION = 'v2'; // bump to force re-auth when scopes change
@@ -33,6 +47,7 @@ async function generatePKCE(): Promise<{ verifier: string; challenge: string }> 
 export function startLogin(): void {
   generatePKCE().then(({ verifier, challenge }) => {
     const state = generateRandomString(32);
+    const redirectUri = getRedirectURI();
 
     sessionStorage.setItem('pkce_verifier', verifier);
     sessionStorage.setItem('oauth_state', state);
@@ -40,7 +55,7 @@ export function startLogin(): void {
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: LINEAR_CLIENT_ID,
-      redirect_uri: REDIRECT_URI,
+      redirect_uri: redirectUri,
       scope: LINEAR_SCOPES,
       state,
       code_challenge: challenge,
@@ -55,10 +70,12 @@ export async function exchangeCode(code: string): Promise<Record<string, unknown
   const verifier = sessionStorage.getItem('pkce_verifier');
   if (!verifier) throw new Error('Missing PKCE verifier');
 
+  const redirectUri = getRedirectURI();
+
   const res = await fetch('/api/linear/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: REDIRECT_URI }),
+    body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: redirectUri }),
   });
 
   if (!res.ok) {
