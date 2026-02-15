@@ -408,7 +408,10 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   }, []);
 
   // Interaction refs
-  const dragRef = useRef<{ type: 'cluster' | 'mem' | 'pan'; id?: number | string } | null>(null);
+  const dragRef = useRef<{ type: 'pan' } | null>(null);
+  const isPanningRef = useRef<boolean>(false);
+  const suppressClickRef = useRef<boolean>(false);
+  const freezeGestureRef = useRef<boolean>(false);
   const mouseDownScreenRef = useRef<{ x: number; y: number } | null>(null);
   const panStartCamRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
@@ -427,6 +430,18 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
   const stopCameraAnim = useCallback(() => {
     animDurationRef.current = 0;
+  }, []);
+
+  const syncCameraNow = useCallback(() => {
+    const dur = animDurationRef.current;
+    if (dur > 0) {
+      const now = performance.now();
+      const t = Math.min(1, Math.max(0, (now - animStartRef.current) / dur));
+      cameraRef.current = lerpCamera(cameraStartRef.current, cameraTargetRef.current, t);
+      animDurationRef.current = 0;
+    }
+    cameraStartRef.current = { ...cameraRef.current };
+    cameraTargetRef.current = { ...cameraRef.current };
   }, []);
 
   const markWebGLDirty = useCallback(() => {
@@ -1033,10 +1048,10 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       // Animate camera
       const now = performance.now();
       const dur = animDurationRef.current;
-      if (dur > 0 && now < animStartRef.current + dur) {
+      if (!isPanningRef.current && dur > 0 && now < animStartRef.current + dur) {
         const t = Math.min(1, (now - animStartRef.current) / dur);
         cameraRef.current = lerpCamera(cameraStartRef.current, cameraTargetRef.current, t);
-      } else if (dur > 0) {
+      } else if (!isPanningRef.current && dur > 0) {
         cameraRef.current = { ...cameraTargetRef.current };
         animDurationRef.current = 0;
       }
@@ -1066,17 +1081,17 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const truncateLabel = (text: string, maxChars = 28) => (
         text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 1))}\u2026`
       );
-      const drawMemHoverLabel = (sn: MemSubNode, anchorR: number) => {
+      const drawMemLabel = (sn: MemSubNode, anchorR: number, variant: 'hover' | 'auto' = 'hover') => {
         if (sn.x == null || sn.y == null) return;
-        const txt = truncateLabel(sn.label || sn.memId, 28);
-        const fs = 12 * invS;
-        const px = 7 * invS;
-        const py = 4 * invS;
-        const radius = 7 * invS;
-        const yGap = 8 * invS;
+        const txt = truncateLabel(sn.label || sn.memId, variant === 'hover' ? 28 : 22);
+        const fs = (variant === 'hover' ? 12 : 10.5) * invS;
+        const px = (variant === 'hover' ? 7 : 6) * invS;
+        const py = (variant === 'hover' ? 4 : 3.2) * invS;
+        const radius = (variant === 'hover' ? 7 : 6) * invS;
+        const yGap = (variant === 'hover' ? 8 : 6) * invS;
 
         ctx.save();
-        ctx.font = `600 ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
+        ctx.font = `${variant === 'hover' ? 600 : 560} ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const tw = ctx.measureText(txt).width;
@@ -1095,50 +1110,127 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           by = worldBottom - 4 * invS - bh;
         }
 
-        ctx.shadowBlur = 10 * invS;
-        ctx.shadowColor = 'rgba(12,18,32,0.45)';
-        ctx.fillStyle = 'rgba(10,16,30,0.93)';
+        ctx.shadowBlur = (variant === 'hover' ? 10 : 7) * invS;
+        ctx.shadowColor = variant === 'hover' ? 'rgba(12,18,32,0.45)' : 'rgba(10,14,24,0.28)';
+        ctx.fillStyle = variant === 'hover' ? 'rgba(10,16,30,0.93)' : 'rgba(8,14,24,0.74)';
         roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
         ctx.fill();
 
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = 'rgba(195,220,255,0.5)';
+        ctx.strokeStyle = variant === 'hover' ? 'rgba(195,220,255,0.5)' : 'rgba(170,196,230,0.34)';
         ctx.lineWidth = Math.max(0.8 * invS, 0.8 / cam.scale);
         roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
         ctx.stroke();
 
-        ctx.fillStyle = '#f3f9ff';
+        ctx.fillStyle = variant === 'hover' ? '#f3f9ff' : '#ddeeff';
         ctx.fillText(txt, cx, by + bh / 2 + 0.2 * invS);
         ctx.restore();
       };
+      const pendingEdgeEndLabels: Array<{ x: number; y: number; text: string; color: string }> = [];
 
       // ── Cluster edges ──
+      let hasExpandedEdgeClip = false;
+      if (isExpMode && currentExpandedId !== null) {
+        const expandedNode = clusterById.get(currentExpandedId);
+        if (expandedNode && expandedNode.x != null && expandedNode.y != null) {
+          const expand = expandInfoRef.current;
+          const exclusionR = Math.max(
+            expandedNode.radius + 2 * invS,
+            (expand?.boundaryR || expandedNode.radius) * 0.88
+          );
+          const worldLeft = (-cam.x) / cam.scale;
+          const worldTop = (-cam.y) / cam.scale;
+          const worldW = vw / cam.scale;
+          const worldH = vh / cam.scale;
+
+          // Exclude the expanded region so no cluster edge is drawn inside it.
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(worldLeft, worldTop, worldW, worldH);
+          ctx.arc(expandedNode.x, expandedNode.y, exclusionR, 0, Math.PI * 2, true);
+          ctx.clip('evenodd');
+          hasExpandedEdgeClip = true;
+        }
+      }
+
       for (const link of clusterLinksNow) {
         const s = typeof link.source === 'object' ? link.source : clusterById.get(Number(link.source));
         const t = typeof link.target === 'object' ? link.target : clusterById.get(Number(link.target));
         if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
+        const sourceId = typeof link.source === 'object' ? (link.source as ClusterNode).id : Number(link.source);
+        const targetId = typeof link.target === 'object' ? (link.target as ClusterNode).id : Number(link.target);
 
-        const mx = (s.x + t.x) / 2;
-        const my = (s.y + t.y) / 2;
-        const dx = t.x - s.x;
-        const dy = t.y - s.y;
-        const cpx = mx - dy * 0.15;
-        const cpy = my + dx * 0.15;
+        let sx = s.x;
+        let sy = s.y;
+        let tx = t.x;
+        let ty = t.y;
 
         const connectsExpanded = isExpMode && (
-          (typeof link.source === 'object' ? (link.source as ClusterNode).id : link.source) === currentExpandedId ||
-          (typeof link.target === 'object' ? (link.target as ClusterNode).id : link.target) === currentExpandedId
+          sourceId === currentExpandedId ||
+          targetId === currentExpandedId
         );
+        if (isExpMode && connectsExpanded && currentExpandedId !== null) {
+          const expandedNode = sourceId === currentExpandedId ? s : t;
+          const externalNode = sourceId === currentExpandedId ? t : s;
+          if (
+            expandedNode.x == null ||
+            expandedNode.y == null ||
+            externalNode.x == null ||
+            externalNode.y == null
+          ) continue;
+          const expandedX = expandedNode.x;
+          const expandedY = expandedNode.y;
+          const externalX = externalNode.x;
+          const externalY = externalNode.y;
+          const ddx = externalX - expandedX;
+          const ddy = externalY - expandedY;
+          const dist = Math.hypot(ddx, ddy);
+          if (dist < 1e-6) continue;
+          const ux = ddx / dist;
+          const uy = ddy / dist;
+          const edgePad = 1.5 * invS;
+          sx = expandedX + ux * (expandedNode.radius + edgePad);
+          sy = expandedY + uy * (expandedNode.radius + edgePad);
+          tx = externalX - ux * (externalNode.radius + edgePad);
+          ty = externalY - uy * (externalNode.radius + edgePad);
+
+          const labelOffset = Math.min(externalNode.radius * 0.58, Math.max(12 * invS, externalNode.radius * 0.42));
+          const lx = tx + ux * labelOffset;
+          const ly = ty + uy * labelOffset;
+          pendingEdgeEndLabels.push({
+            x: lx,
+            y: ly,
+            text: externalNode.label,
+            color: externalNode.color,
+          });
+        }
+
+        const mx = (sx + tx) / 2;
+        const my = (sy + ty) / 2;
+        const dx = tx - sx;
+        const dy = ty - sy;
+        const cpx = mx - dy * 0.15;
+        const cpy = my + dx * 0.15;
+        const baseWidth = Math.max(0.5, Math.min(2.5, link.weight * 0.08));
 
         ctx.beginPath();
-        ctx.moveTo(s.x, s.y);
-        ctx.quadraticCurveTo(cpx, cpy, t.x, t.y);
-        ctx.strokeStyle = isExpMode
-          ? (connectsExpanded ? 'rgba(200,220,255,0.15)' : 'rgba(200,220,255,0.03)')
-          : 'rgba(200,220,255,0.06)';
-        ctx.lineWidth = Math.max(0.5, (connectsExpanded ? 1.5 : Math.min(2.5, link.weight * 0.08))) * invS;
+        ctx.moveTo(sx, sy);
+        ctx.quadraticCurveTo(cpx, cpy, tx, ty);
+        if (isExpMode) {
+          if (connectsExpanded) {
+            ctx.strokeStyle = 'rgba(215,232,255,0.52)';
+            ctx.lineWidth = (baseWidth * 1.45 + 0.35) * invS;
+          } else {
+            ctx.strokeStyle = 'rgba(190,210,238,0.015)';
+            ctx.lineWidth = Math.max(0.3, baseWidth * 0.55) * invS;
+          }
+        } else {
+          ctx.strokeStyle = 'rgba(200,220,255,0.06)';
+          ctx.lineWidth = baseWidth * invS;
+        }
         ctx.stroke();
       }
+      if (hasExpandedEdgeClip) ctx.restore();
 
       // ── Sub-graph edges ──
       if (!useWebGLSub && isExpMode && subNodesNow.length > 0) {
@@ -1214,6 +1306,40 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         }
       }
 
+      if (pendingEdgeEndLabels.length > 0) {
+        for (const label of pendingEdgeEndLabels) {
+          ctx.save();
+          const fs = 11 * invS;
+          const px = 6 * invS;
+          const py = 3.5 * invS;
+          const rr = 6 * invS;
+          ctx.font = `600 ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const tw = ctx.measureText(label.text).width;
+          const bw = tw + px * 2;
+          const bh = fs + py * 2;
+          const cx = Math.max(worldLeft + bw / 2 + 4 * invS, Math.min(worldRight - bw / 2 - 4 * invS, label.x));
+          const cy = Math.max(worldTop + bh / 2 + 4 * invS, Math.min(worldBottom - bh / 2 - 4 * invS, label.y));
+
+          ctx.shadowBlur = 8 * invS;
+          ctx.shadowColor = 'rgba(10,16,28,0.5)';
+          ctx.fillStyle = 'rgba(8,14,26,0.88)';
+          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
+          ctx.fill();
+
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = 'rgba(205,223,246,0.42)';
+          ctx.lineWidth = Math.max(0.8 * invS, 0.8 / cam.scale);
+          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
+          ctx.stroke();
+
+          ctx.fillStyle = label.color;
+          ctx.fillText(label.text, cx, cy + 0.2 * invS);
+          ctx.restore();
+        }
+      }
+
       // ── Sub-nodes: screen-relative sizing ──
       if (!useWebGLSub && isExpMode) {
         const expand = expandInfoRef.current;
@@ -1244,7 +1370,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           }
         }
         if (hoveredNodeObj) {
-          drawMemHoverLabel(hoveredNodeObj, hoveredNodeR);
+          drawMemLabel(hoveredNodeObj, hoveredNodeR, 'hover');
         }
       }
 
@@ -1256,7 +1382,76 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
           const nodeWorldR = nodeScreenR * invS;
           const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
-          drawMemHoverLabel(sn, baseR * 1.35);
+          drawMemLabel(sn, baseR * 1.35, 'hover');
+        }
+      }
+
+      // ── Auto labels for key sub-nodes in expanded/highlight mode ──
+      if (isExpMode && subNodesNow.length > 0) {
+        const expand = expandInfoRef.current;
+        const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, cam.scale)) * 0.88;
+        const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
+        const nodeWorldR = nodeScreenR * invS;
+        const viewportPad = nodeWorldR * 2.2;
+        const inViewport = (sn: MemSubNode) => {
+          if (sn.x == null || sn.y == null) return false;
+          return (
+            sn.x >= worldLeft - viewportPad &&
+            sn.x <= worldRight + viewportPad &&
+            sn.y >= worldTop - viewportPad &&
+            sn.y <= worldBottom + viewportPad
+          );
+        };
+        const viewportNodes = subNodesNow
+          .filter((sn) => inViewport(sn) && (sn.label || sn.memId) && sn.memId !== hoveredMem)
+          .sort((a, b) => (b.importance || 0) - (a.importance || 0));
+
+        const viewportCount = viewportNodes.length;
+        const viewportShowAllThreshold = 20;
+        const minLabelBudget = 5;
+        const maxLabelBudget = 20;
+        const zoomRange = 6; // 从默认尺度逐步增长到满配 label 数量
+        const zoomT = Math.max(0, Math.min(1, (cam.scale - 1) / zoomRange));
+        const zoomBudget = Math.round(minLabelBudget + (maxLabelBudget - minLabelBudget) * zoomT);
+        const targetLabelCount = viewportCount <= viewportShowAllThreshold
+          ? viewportCount
+          : Math.min(maxLabelBudget, Math.max(minLabelBudget, zoomBudget), viewportCount);
+
+        // 视窗内节点较少时直接全显；节点较多时保留距离约束，减少拥挤与重叠。
+        const enforceSpacing = viewportCount > viewportShowAllThreshold;
+        const minAnchorDistWorld = Math.max(24, 54 - zoomT * 24) * invS;
+
+        const selected: MemSubNode[] = [];
+        for (const sn of viewportNodes) {
+          if (selected.length >= targetLabelCount) break;
+          if (!enforceSpacing) {
+            selected.push(sn);
+            continue;
+          }
+
+          let tooClose = false;
+          for (const picked of selected) {
+            const dx = (sn.x as number) - (picked.x as number);
+            const dy = (sn.y as number) - (picked.y as number);
+            if (dx * dx + dy * dy < minAnchorDistWorld * minAnchorDistWorld) {
+              tooClose = true;
+              break;
+            }
+          }
+          if (!tooClose) selected.push(sn);
+        }
+
+        // 若距离约束导致数量不足，按重要性补齐至预算上限。
+        if (enforceSpacing && selected.length < targetLabelCount) {
+          for (const sn of viewportNodes) {
+            if (selected.length >= targetLabelCount) break;
+            if (!selected.includes(sn)) selected.push(sn);
+          }
+        }
+
+        for (const sn of selected) {
+          const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
+          drawMemLabel(sn, baseR, 'auto');
         }
       }
 
@@ -1368,58 +1563,53 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   }, [screenToWorld]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    mouseDownScreenRef.current = { x: e.clientX, y: e.clientY };
-    const { x, y } = getWorldPos(e);
-    const hit = findNode(x, y);
+    const now = performance.now();
+    const isAnimating =
+      animDurationRef.current > 0 && now < animStartRef.current + animDurationRef.current;
+    suppressClickRef.current = isAnimating;
 
-    if (hit) {
-      if (hit.type === 'cluster') {
-        const node = hit.node as ClusterNode;
-        node.fx = x; node.fy = y;
-        dragRef.current = { type: 'cluster', id: node.id };
-      } else {
-        const node = hit.node as MemSubNode;
-        node.fx = x; node.fy = y;
-        dragRef.current = { type: 'mem', id: node.memId };
-      }
-    } else {
+    if (isAnimating) {
+      // During zoom animation, first click only freezes the viewport.
+      // This gesture is consumed and should not start pan/click actions.
+      syncCameraNow();
       stopCameraAnim();
-      dragRef.current = { type: 'pan' };
-      panStartCamRef.current = { x: cameraRef.current.x, y: cameraRef.current.y };
+      freezeGestureRef.current = true;
+      dragRef.current = null;
+      isPanningRef.current = false;
+      mouseDownScreenRef.current = null;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = 'grab';
+      return;
     }
-  }, [findNode, getWorldPos, stopCameraAnim]);
+
+    freezeGestureRef.current = false;
+    mouseDownScreenRef.current = { x: e.clientX, y: e.clientY };
+    // Commit animated camera state before pan starts; avoids jumping to stale pre-zoom camera.
+    syncCameraNow();
+    stopCameraAnim();
+    dragRef.current = { type: 'pan' };
+    isPanningRef.current = true;
+    panStartCamRef.current = { x: cameraRef.current.x, y: cameraRef.current.y };
+    const canvas = canvasRef.current;
+    if (canvas) canvas.style.cursor = 'grabbing';
+  }, [stopCameraAnim, syncCameraNow]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (freezeGestureRef.current) return;
     const drag = dragRef.current;
 
     if (drag) {
-      if (drag.type === 'pan') {
-        const downPos = mouseDownScreenRef.current;
-        if (!downPos) return;
-        const dx = e.clientX - downPos.x;
-        const dy = e.clientY - downPos.y;
-        cameraRef.current = {
-          ...cameraRef.current,
-          x: panStartCamRef.current.x + dx,
-          y: panStartCamRef.current.y + dy,
-        };
-        const canvas = canvasRef.current;
-        if (canvas) canvas.style.cursor = 'grabbing';
-        return;
-      }
-
-      const { x, y } = getWorldPos(e);
-      if (drag.type === 'cluster') {
-        const node = clusterNodesRef.current.find((n) => n.id === drag.id);
-        if (node && simRef.current) { node.fx = x; node.fy = y; simRef.current.alpha(0.3).restart(); }
-      } else if (drag.type === 'mem') {
-        const node = subNodesRef.current.find((n) => n.memId === drag.id);
-        if (node) {
-          node.x = x; node.y = y;
-          node.fx = x; node.fy = y;
-          markWebGLDirty();
-        }
-      }
+      const downPos = mouseDownScreenRef.current;
+      if (!downPos) return;
+      const dx = e.clientX - downPos.x;
+      const dy = e.clientY - downPos.y;
+      cameraRef.current = {
+        ...cameraRef.current,
+        x: panStartCamRef.current.x + dx,
+        y: panStartCamRef.current.y + dy,
+      };
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = 'grabbing';
       return;
     }
 
@@ -1438,55 +1628,82 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       hoveredNodeRef.current = null;
       hoveredMemRef.current = null;
     }
-  }, [findNode, getWorldPos, markWebGLDirty]);
+  }, [findNode, getWorldPos]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (freezeGestureRef.current) {
+      freezeGestureRef.current = false;
+      suppressClickRef.current = false;
+      dragRef.current = null;
+      isPanningRef.current = false;
+      mouseDownScreenRef.current = null;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = 'grab';
+      return;
+    }
+
     const drag = dragRef.current;
     if (!drag) return;
-
-    if (drag.type === 'cluster') {
-      const node = clusterNodesRef.current.find((n) => n.id === drag.id);
-      if (node) { node.fx = null; node.fy = null; }
-    } else if (drag.type === 'mem') {
-      const node = subNodesRef.current.find((n) => n.memId === drag.id);
-      if (node) { node.fx = null; node.fy = null; }
-    }
 
     const downPos = mouseDownScreenRef.current;
     const wasDrag = downPos && (
       (e.clientX - downPos.x) ** 2 + (e.clientY - downPos.y) ** 2 > 25
     );
 
-    if (!wasDrag) {
+    if (!wasDrag && !suppressClickRef.current) {
       const { x, y } = getWorldPos(e);
       const hit = findNode(x, y);
 
       if (!hit) {
-        if (expandedClusterRef.current !== null) collapseCluster();
+        if (expandedClusterRef.current !== null) {
+          const expand = expandInfoRef.current;
+          if (expand) {
+            const dx = x - expand.cx;
+            const dy = y - expand.cy;
+            const boundaryWorldR = expand.boundaryR * 0.88;
+            if (dx * dx + dy * dy <= boundaryWorldR * boundaryWorldR) {
+              dragRef.current = null;
+              isPanningRef.current = false;
+              suppressClickRef.current = false;
+              freezeGestureRef.current = false;
+              mouseDownScreenRef.current = null;
+              const canvas = canvasRef.current;
+              if (canvas) canvas.style.cursor = 'grab';
+              return;
+            }
+          }
+          collapseCluster();
+        }
       } else if (hit.type === 'cluster') {
-        expandCluster((hit.node as ClusterNode).id);
+        const hitId = (hit.node as ClusterNode).id;
+        // Clicking inside the already expanded cluster should be a no-op, not a collapse toggle.
+        if (expandedClusterRef.current !== null && hitId === expandedClusterRef.current) {
+          // no-op
+        } else {
+          expandCluster(hitId);
+        }
       } else {
         onMemoryClick((hit.node as MemSubNode).memId);
       }
     }
 
     dragRef.current = null;
+    isPanningRef.current = false;
+    suppressClickRef.current = false;
+    freezeGestureRef.current = false;
     mouseDownScreenRef.current = null;
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = 'grab';
   }, [findNode, getWorldPos, expandCluster, collapseCluster, onMemoryClick]);
 
   const handleMouseLeave = useCallback(() => {
+    freezeGestureRef.current = false;
+    suppressClickRef.current = false;
     const drag = dragRef.current;
     if (drag) {
-      if (drag.type === 'cluster') {
-        const node = clusterNodesRef.current.find((n) => n.id === drag.id);
-        if (node) { node.fx = null; node.fy = null; }
-      } else if (drag.type === 'mem') {
-        const node = subNodesRef.current.find((n) => n.memId === drag.id);
-        if (node) { node.fx = null; node.fy = null; }
-      }
       dragRef.current = null;
+      isPanningRef.current = false;
+      suppressClickRef.current = false;
       mouseDownScreenRef.current = null;
     }
     hoveredNodeRef.current = null;
@@ -1499,6 +1716,21 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         window.clearTimeout(subSimStartTimerRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const onWindowMouseUp = () => {
+      freezeGestureRef.current = false;
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      isPanningRef.current = false;
+      suppressClickRef.current = false;
+      mouseDownScreenRef.current = null;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = 'grab';
+    };
+    window.addEventListener('mouseup', onWindowMouseUp);
+    return () => window.removeEventListener('mouseup', onWindowMouseUp);
   }, []);
 
   if (memories.length === 0) {
