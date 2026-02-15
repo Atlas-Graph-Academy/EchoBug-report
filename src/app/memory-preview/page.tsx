@@ -5,16 +5,12 @@ import { useRouter } from 'next/navigation';
 import MemoryPreviewCanvas from '@/components/MemoryPreviewCanvas';
 
 const MEMORY_PASSWORD = '888';
-const MEMORY_UNLOCK_KEY = 'memory_preview_unlocked';
 
 export default function MemoryPreviewPage() {
   const router = useRouter();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [isUnlocked, setIsUnlocked] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return sessionStorage.getItem(MEMORY_UNLOCK_KEY) === '1';
-  });
+  const [isUnlocked, setIsUnlocked] = useState(false);
 
   const handleUnlock = useCallback(() => {
     if (password.trim() !== MEMORY_PASSWORD) {
@@ -22,7 +18,6 @@ export default function MemoryPreviewPage() {
       return;
     }
 
-    sessionStorage.setItem(MEMORY_UNLOCK_KEY, '1');
     setError('');
     setIsUnlocked(true);
   }, [password]);
@@ -66,7 +61,10 @@ export default function MemoryPreviewPage() {
         <button className="memory-cancel-btn" onClick={() => router.push('/')}>
           Back
         </button>
-        <h1>Memory Preview</h1>
+        <div className="memory-page-title">
+          <h1>Memory Preview</h1>
+          <p>Key + time capsules from your memory CSV</p>
+        </div>
       </div>
       <MemoryPreviewCanvas />
     </div>

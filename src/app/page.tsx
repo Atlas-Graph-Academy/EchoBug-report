@@ -16,8 +16,6 @@ import Toast from '@/components/Toast';
 import type { Photo, CreatedIssue } from '@/lib/types';
 
 type AppFlow = 'idle' | 'annotating' | 'reporting' | 'success';
-const MEMORY_PASSWORD = '888';
-const MEMORY_UNLOCK_KEY = 'memory_preview_unlocked';
 
 export default function Home() {
   const router = useRouter();
@@ -30,9 +28,6 @@ export default function Home() {
   const [annotatedBlob, setAnnotatedBlob] = useState<Blob | null>(null);
   const [annotatedPreview, setAnnotatedPreview] = useState<string>('');
   const [createdIssue, setCreatedIssue] = useState<CreatedIssue | null>(null);
-  const [showMemoryPrompt, setShowMemoryPrompt] = useState(false);
-  const [memoryPassword, setMemoryPassword] = useState('');
-  const [memoryError, setMemoryError] = useState('');
 
   // Photo card click → open annotation
   const handlePhotoClick = useCallback((photo: Photo) => {
@@ -107,29 +102,8 @@ export default function Home() {
   }, []);
 
   const handleOpenMemoryPrompt = useCallback(() => {
-    setMemoryPassword('');
-    setMemoryError('');
-    setShowMemoryPrompt(true);
-  }, []);
-
-  const handleSubmitMemoryPassword = useCallback(() => {
-    if (memoryPassword.trim() !== MEMORY_PASSWORD) {
-      setMemoryError('Wrong password');
-      return;
-    }
-
-    sessionStorage.setItem(MEMORY_UNLOCK_KEY, '1');
-    setShowMemoryPrompt(false);
-    setMemoryPassword('');
-    setMemoryError('');
     router.push('/memory-preview');
-  }, [memoryPassword, router]);
-
-  const handleCloseMemoryPrompt = useCallback(() => {
-    setShowMemoryPrompt(false);
-    setMemoryPassword('');
-    setMemoryError('');
-  }, []);
+  }, [router]);
 
   // Loading state
   if (isLoading) {
@@ -188,44 +162,6 @@ export default function Home() {
       {/* Success overlay */}
       {flow === 'success' && createdIssue && (
         <SuccessOverlay issue={createdIssue} onDismiss={handleDismissSuccess} />
-      )}
-
-      {showMemoryPrompt && (
-        <div className="memory-modal-backdrop" onClick={handleCloseMemoryPrompt}>
-          <div
-            className="memory-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Memory password"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2>Memory Preview</h2>
-            <p>Enter password to continue.</p>
-            <input
-              type="password"
-              value={memoryPassword}
-              onChange={(e) => {
-                setMemoryPassword(e.target.value);
-                if (memoryError) setMemoryError('');
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSubmitMemoryPassword();
-                if (e.key === 'Escape') handleCloseMemoryPrompt();
-              }}
-              autoFocus
-              placeholder="Password"
-            />
-            {memoryError && <span className="memory-modal-error">{memoryError}</span>}
-            <div className="memory-modal-actions">
-              <button className="memory-cancel-btn" onClick={handleCloseMemoryPrompt}>
-                Cancel
-              </button>
-              <button className="memory-submit-btn" onClick={handleSubmitMemoryPassword}>
-                Open
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       <Toast />
