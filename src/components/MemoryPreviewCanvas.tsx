@@ -805,6 +805,7 @@ export default function MemoryPreviewCanvas() {
                 currentMemory={narrativeContext.currentMemory}
                 chains={narrativeContext.chains}
                 onNodeClick={handleNarrativeNodeClick}
+                resizable
               />
             </div>
           )}

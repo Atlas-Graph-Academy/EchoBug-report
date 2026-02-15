@@ -1028,6 +1028,10 @@ main {
   left: 16px;
   z-index: 35;
   width: min(620px, 58vw);
+  min-width: 360px;
+  min-height: 220px;
+  max-width: calc(100vw - 12px);
+  max-height: calc(100vh - 12px);
   pointer-events: auto;
   border-radius: 14px;
   overflow: hidden;
@@ -1035,11 +1039,53 @@ main {
   border: 1px solid rgba(201, 225, 255, 0.12);
   background: #0c1426;
 }
+.narrative-graph-floating.narrative-graph-floating--manual-size .narrative-graph-container {
+  height: 100%;
+}
 .narrative-graph-floating .narrative-graph-container {
   margin-top: 0;
   height: 280px;
   border: none;
   border-radius: 0;
+}
+.narrative-graph-container-resizable .narrative-graph-resize-handle {
+  position: absolute;
+  z-index: 4;
+  user-select: none;
+}
+.narrative-graph-resize-handle-right {
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: ew-resize;
+}
+.narrative-graph-resize-handle-bottom {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 10px;
+  cursor: ns-resize;
+}
+.narrative-graph-resize-handle-corner {
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+}
+.narrative-graph-resize-handle-corner::before {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid rgba(190, 220, 245, 0.48);
+  border-bottom: 1px solid rgba(190, 220, 245, 0.48);
+}
+body.narrative-graph-resizing {
+  cursor: nwse-resize;
 }
 
 @media (max-width: 720px) {

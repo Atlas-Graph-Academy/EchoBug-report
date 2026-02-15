@@ -38,6 +38,7 @@ interface NarrativeGraphProps {
     surprise?: NodeWithSimilarity;
   };
   onNodeClick: (nodeId: string) => void;
+  resizable?: boolean;
 }
 
 /* ── Emotion palette ── */
@@ -652,7 +653,9 @@ export default function NarrativeGraph({
   currentMemory,
   chains,
   onNodeClick,
+  resizable = false,
 }: NarrativeGraphProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] }>({ nodes: [], edges: [] });
   const hoveredRef = useRef<string | null>(null);
@@ -735,14 +738,77 @@ export default function NarrativeGraph({
     }
   }, [onNodeClick]);
 
+  const startResize = useCallback((mode: 'x' | 'y' | 'xy', e: React.MouseEvent<HTMLDivElement>) => {
+    if (!resizable) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const floating = container.closest('.narrative-graph-floating') as HTMLDivElement | null;
+    if (!floating) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = floating.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startW = rect.width;
+    const startH = rect.height;
+    const minW = 360;
+    const minH = 220;
+    const maxW = Math.max(minW, window.innerWidth - 12);
+    const maxH = Math.max(minH, window.innerHeight - 12);
+
+    floating.classList.add('narrative-graph-floating--manual-size');
+    document.body.classList.add('narrative-graph-resizing');
+
+    const onMove = (ev: MouseEvent) => {
+      if (mode === 'x' || mode === 'xy') {
+        const nextW = clamp(startW + (ev.clientX - startX), minW, maxW);
+        floating.style.width = `${nextW}px`;
+      }
+      if (mode === 'y' || mode === 'xy') {
+        const nextH = clamp(startH + (ev.clientY - startY), minH, maxH);
+        floating.style.height = `${nextH}px`;
+      }
+    };
+
+    const onUp = () => {
+      document.body.classList.remove('narrative-graph-resizing');
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [resizable]);
+
   return (
-    <div className="narrative-graph-container">
+    <div
+      ref={containerRef}
+      className={`narrative-graph-container${resizable ? ' narrative-graph-container-resizable' : ''}`}
+    >
       <canvas
         ref={canvasRef}
         className="narrative-graph-canvas"
         onMouseMove={handleMouseMove}
         onClick={handleClick}
       />
+      {resizable && (
+        <>
+          <div
+            className="narrative-graph-resize-handle narrative-graph-resize-handle-right"
+            onMouseDown={(e) => startResize('x', e)}
+          />
+          <div
+            className="narrative-graph-resize-handle narrative-graph-resize-handle-bottom"
+            onMouseDown={(e) => startResize('y', e)}
+          />
+          <div
+            className="narrative-graph-resize-handle narrative-graph-resize-handle-corner"
+            onMouseDown={(e) => startResize('xy', e)}
+          />
+        </>
+      )}
     </div>
   );
 }
