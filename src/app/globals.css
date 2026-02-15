@@ -970,3 +970,62 @@ main {
     height: 300px;
   }
 }
+
+/* ── View Toggle (Stream / Constellation) ── */
+.memory-view-toggle {
+  display: flex;
+  gap: 2px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 2px;
+}
+.memory-view-toggle button {
+  border: none;
+  background: transparent;
+  color: #8fb2c6;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.memory-view-toggle button:hover {
+  color: #cfe5f7;
+}
+.memory-view-toggle button.active {
+  background: rgba(255,255,255,0.12);
+  color: #f0f7ff;
+}
+
+/* ── Cluster Graph (Constellation) ── */
+.cluster-graph-container {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+.cluster-graph-container canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.cluster-collapse-btn {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  border: 1px solid rgba(201,225,255,0.22);
+  background: rgba(12,20,38,0.85);
+  backdrop-filter: blur(6px);
+  color: #d9ebff;
+  border-radius: 8px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 10;
+}
+.cluster-collapse-btn:hover {
+  background: rgba(255,255,255,0.1);
+}

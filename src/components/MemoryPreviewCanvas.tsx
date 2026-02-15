@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import NarrativeGraph from '@/components/NarrativeGraph';
+import ClusterGraph from '@/components/ClusterGraph';
 import { buildNarrativeChains, type MemoryNode, type EmbeddingsData } from '@/lib/narrative';
 
 interface MemoryRecord {
@@ -263,6 +264,7 @@ export default function MemoryPreviewCanvas() {
   const [selectedEmotion, setSelectedEmotion] = useState('All');
   const [selectedRecord, setSelectedRecord] = useState<DisplayMemoryRecord | null>(null);
   const [narrativeMemoryId, setNarrativeMemoryId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'stream' | 'constellation'>('stream');
 
   useEffect(() => {
     const load = async () => {
@@ -595,6 +597,33 @@ export default function MemoryPreviewCanvas() {
     setNarrativeMemoryId(null);
   }, []);
 
+  const handleConstellationMemoryClick = useCallback((memoryId: string) => {
+    const record = sortedRecords.find(r => r.id === memoryId);
+    if (!record) return;
+
+    const keyText = normalizeValue(record.object || record.id);
+    const createdSource = record.createdAt || record.time;
+    const shortTimeText = formatShortTime(record.time || record.createdAt);
+    const emotion = normalizeValue(record.emotion);
+    const emotionStyle = getEmotionStyle(emotion);
+
+    setSelectedRecord({
+      keyText,
+      shortTimeText,
+      createdTimeText: formatCreatedTime(createdSource),
+      category: normalizeValue(record.category),
+      object: normalizeValue(record.object || record.id),
+      emotion,
+      visibility: normalizeValue(record.visibility || record.location),
+      description: normalizeValue(record.description),
+      details: normalizeValue(record.details),
+      color: emotionStyle.color,
+      glow: emotionStyle.glow,
+    });
+
+    setNarrativeMemoryId(memoryId);
+  }, [sortedRecords]);
+
   if (loading) {
     return <div className="memory-status">Loading memory data...</div>;
   }
@@ -607,37 +636,63 @@ export default function MemoryPreviewCanvas() {
     <>
       <div className="memory-canvas-wrapper">
         <div className="memory-canvas-meta">
-          <h2>Memory Stream</h2>
+          <h2>{viewMode === 'stream' ? 'Memory Stream' : 'Constellation'}</h2>
+          <div className="memory-view-toggle">
+            <button
+              className={viewMode === 'stream' ? 'active' : ''}
+              onClick={() => setViewMode('stream')}
+            >
+              Stream
+            </button>
+            <button
+              className={viewMode === 'constellation' ? 'active' : ''}
+              onClick={() => setViewMode('constellation')}
+            >
+              Constellation
+            </button>
+          </div>
           <span>
             {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions
           </span>
         </div>
-        <div className="memory-emotion-tags">
-          <button
-            className={`memory-emotion-tag ${selectedEmotion === 'All' ? 'active' : ''}`}
-            onClick={() => setSelectedEmotion('All')}
-          >
-            All ({sortedRecords.length})
-          </button>
-          {emotionSummary.map((item) => (
+        {viewMode === 'stream' && (
+          <div className="memory-emotion-tags">
             <button
-              key={item.emotion}
-              className={`memory-emotion-tag ${selectedEmotion === item.emotion ? 'active' : ''}`}
-              onClick={() => setSelectedEmotion(item.emotion)}
-              style={{
-                borderColor: item.color,
-                color: item.color,
-                boxShadow: selectedEmotion === item.emotion ? `0 0 16px ${item.glow}` : 'none',
-              }}
+              className={`memory-emotion-tag ${selectedEmotion === 'All' ? 'active' : ''}`}
+              onClick={() => setSelectedEmotion('All')}
             >
-              {item.emotion} ({item.count})
+              All ({sortedRecords.length})
             </button>
-          ))}
-        </div>
-        <div className="memory-canvas-scroll" ref={containerRef}>
-          <div ref={spacerRef} className="memory-canvas-spacer" />
-          <canvas ref={canvasRef} className="memory-canvas" onClick={handleCanvasClick} />
-        </div>
+            {emotionSummary.map((item) => (
+              <button
+                key={item.emotion}
+                className={`memory-emotion-tag ${selectedEmotion === item.emotion ? 'active' : ''}`}
+                onClick={() => setSelectedEmotion(item.emotion)}
+                style={{
+                  borderColor: item.color,
+                  color: item.color,
+                  boxShadow: selectedEmotion === item.emotion ? `0 0 16px ${item.glow}` : 'none',
+                }}
+              >
+                {item.emotion} ({item.count})
+              </button>
+            ))}
+          </div>
+        )}
+        {viewMode === 'stream' ? (
+          <div className="memory-canvas-scroll" ref={containerRef}>
+            <div ref={spacerRef} className="memory-canvas-spacer" />
+            <canvas ref={canvasRef} className="memory-canvas" onClick={handleCanvasClick} />
+          </div>
+        ) : (
+          embeddingsData && (
+            <ClusterGraph
+              memories={memoryNodes}
+              embeddingsData={embeddingsData}
+              onMemoryClick={handleConstellationMemoryClick}
+            />
+          )
+        )}
       </div>
 
       {selectedRecord && (
