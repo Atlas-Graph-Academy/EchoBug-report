@@ -7,7 +7,6 @@ import {
   forceManyBody,
   forceCenter,
   forceCollide,
-  forceRadial,
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from 'd3-force';
@@ -724,18 +723,107 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       nodes[i].importance = importance;
     }
 
-    // ── Sub-force simulation ──
+    // ── Structured seeded sub-layout (frozen; no runtime simulation) ──
     const simNodes = nodes.map((n) => ({ ...n }));
+    const adj: Array<Array<{ to: number; sim: number }>> = Array.from({ length: simNodes.length }, () => []);
+    for (const l of links) {
+      const s = Number(l.source);
+      const t = Number(l.target);
+      if (!Number.isFinite(s) || !Number.isFinite(t) || s < 0 || t < 0 || s >= simNodes.length || t >= simNodes.length) continue;
+      adj[s].push({ to: t, sim: l.similarity });
+      adj[t].push({ to: s, sim: l.similarity });
+    }
 
-    // Initialize positions randomly within boundary (avoid center explosion)
-    for (const n of simNodes) {
-      const angle = hash(n.memId) * 2.399 + (hash(n.memId + 'x') * 0.001); // deterministic scatter
-      const radialBias = 0.14 + (1 - n.importance) * 0.78;
-      n.targetR = boundaryR * radialBias;
-      const jitter = ((hash(n.memId + 'jr') % 1000) / 1000 - 0.5) * boundaryR * 0.08;
-      const r = Math.max(0, Math.min(boundaryR * 0.95, n.targetR + jitter));
-      n.x = cx + Math.cos(angle) * r;
-      n.y = cy + Math.sin(angle) * r;
+    const rankedIdx = Array.from({ length: simNodes.length }, (_, i) => i)
+      .sort((a, b) => simNodes[b].importance - simNodes[a].importance);
+    const hubCount = Math.max(3, Math.min(10, Math.round(Math.sqrt(simNodes.length) / 2)));
+    const hubIdx = rankedIdx.slice(0, hubCount);
+    const hubSet = new Set(hubIdx);
+
+    const groups = new Map<number, number[]>();
+    for (const h of hubIdx) groups.set(h, []);
+    for (let i = 0; i < simNodes.length; i++) {
+      if (hubSet.has(i)) {
+        groups.get(i)!.push(i);
+        continue;
+      }
+      let bestHub = -1;
+      let bestScore = -1;
+      for (const e of adj[i]) {
+        if (!hubSet.has(e.to)) continue;
+        const score = e.sim * (0.75 + simNodes[e.to].importance * 0.6);
+        if (score > bestScore) {
+          bestScore = score;
+          bestHub = e.to;
+        }
+      }
+      if (bestHub === -1) bestHub = hubIdx[hash(simNodes[i].memId) % hubIdx.length];
+      groups.get(bestHub)!.push(i);
+    }
+
+    const fullTurn = Math.PI * 2;
+    const hubSpacing = fullTurn / hubIdx.length;
+    for (let hPos = 0; hPos < hubIdx.length; hPos++) {
+      const hub = hubIdx[hPos];
+      const members = groups.get(hub) || [];
+      members.sort((a, b) => simNodes[b].importance - simNodes[a].importance);
+      const baseAngle = hPos * hubSpacing + (hash(simNodes[hub].memId + ':hub') % 1000) / 1000 * 0.08;
+      const sectorWidth = Math.max(0.5, Math.min(1.2, hubSpacing * 0.92));
+
+      for (let rank = 0; rank < members.length; rank++) {
+        const idx = members[rank];
+        const n = simNodes[idx];
+        const isHub = idx === hub;
+        const imp = n.importance;
+
+        const ring = Math.floor(rank / 10);
+        const ringOffset = ring * boundaryR * 0.07;
+        const radialBias = isHub ? 0.14 : 0.24 + (1 - imp) * 0.58;
+        n.targetR = Math.min(boundaryR * 0.94, boundaryR * radialBias + ringOffset);
+
+        const slot = rank % 10;
+        const slotsInRing = Math.min(10, members.length - ring * 10);
+        const t = slotsInRing <= 1 ? 0.5 : slot / (slotsInRing - 1);
+        const angleOffset = (t - 0.5) * sectorWidth;
+        const jitterA = (((hash(n.memId + ':a') % 1000) / 1000) - 0.5) * 0.06;
+        const jitterR = (((hash(n.memId + ':r') % 1000) / 1000) - 0.5) * boundaryR * 0.02;
+        const angle = baseAngle + angleOffset + jitterA;
+        const r = Math.max(boundaryR * 0.08, Math.min(boundaryR * 0.96, n.targetR + jitterR));
+        n.x = cx + Math.cos(angle) * r;
+        n.y = cy + Math.sin(angle) * r;
+      }
+    }
+
+    const minDistBase = collideR * 0.95;
+    for (let iter = 0; iter < 3; iter++) {
+      for (let i = 0; i < simNodes.length; i++) {
+        const a = simNodes[i];
+        if (a.x == null || a.y == null) continue;
+        for (let j = i + 1; j < simNodes.length; j++) {
+          const b = simNodes[j];
+          if (b.x == null || b.y == null) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+          const minDist = minDistBase * (0.85 + (a.importance + b.importance) * 0.25);
+          if (dist >= minDist) continue;
+          const push = (minDist - dist) * 0.5;
+          const ux = dx / dist;
+          const uy = dy / dist;
+          a.x -= ux * push; a.y -= uy * push;
+          b.x += ux * push; b.y += uy * push;
+        }
+      }
+      for (const n of simNodes) {
+        if (n.x == null || n.y == null) continue;
+        const dx = n.x - cx;
+        const dy = n.y - cy;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+        if (d > boundaryR * 0.96) {
+          n.x = cx + (dx / d) * boundaryR * 0.96;
+          n.y = cy + (dy / d) * boundaryR * 0.96;
+        }
+      }
     }
 
     // Paint seeded positions immediately, then start simulation after zoom settles.
