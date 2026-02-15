@@ -683,7 +683,7 @@ export default function MemoryPreviewCanvas() {
         </button>
       </header>
 
-      {narrativeContext && (
+      {!showConstellationDetail && narrativeContext && (
         <NarrativeGraph
           currentMemory={narrativeContext.currentMemory}
           chains={narrativeContext.chains}
@@ -798,6 +798,15 @@ export default function MemoryPreviewCanvas() {
                 }
               />
             )
+          )}
+          {showConstellationDetail && narrativeContext && (
+            <div className="narrative-graph-floating">
+              <NarrativeGraph
+                currentMemory={narrativeContext.currentMemory}
+                chains={narrativeContext.chains}
+                onNodeClick={handleNarrativeNodeClick}
+              />
+            </div>
           )}
         </div>
         {showConstellationDetail && (

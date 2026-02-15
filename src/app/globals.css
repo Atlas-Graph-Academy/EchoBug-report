@@ -781,6 +781,7 @@ main {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 .memory-canvas-meta {
   display: flex;
@@ -1020,9 +1021,38 @@ main {
   height: 100%;
 }
 
+/* Floating minimap variant on main constellation graph */
+.narrative-graph-floating {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 35;
+  width: min(480px, 45vw);
+  pointer-events: auto;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(201, 225, 255, 0.12);
+  background: #0c1426;
+}
+.narrative-graph-floating .narrative-graph-container {
+  margin-top: 0;
+  height: 220px;
+  border: none;
+  border-radius: 0;
+}
+
 @media (max-width: 720px) {
   .narrative-graph-container {
     height: 300px;
+  }
+  .narrative-graph-floating {
+    width: calc(100% - 24px);
+    left: 12px;
+    bottom: 12px;
+  }
+  .narrative-graph-floating .narrative-graph-container {
+    height: 180px;
   }
 }
 
