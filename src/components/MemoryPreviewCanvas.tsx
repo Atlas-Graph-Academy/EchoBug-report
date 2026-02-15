@@ -495,7 +495,7 @@ export default function MemoryPreviewCanvas() {
       if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-  }, [displayRecords]);
+  }, [displayRecords, viewMode]);
 
   const memoryNodes = useMemo<MemoryNode[]>(() => {
     return sortedRecords.map(record => ({

@@ -7,6 +7,7 @@ import {
   forceManyBody,
   forceCenter,
   forceCollide,
+  forceRadial,
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from 'd3-force';
@@ -70,6 +71,21 @@ function lerpCamera(a: Camera, b: Camera, t: number): Camera {
   };
 }
 
+function subNodeBaseScreenPx(
+  viewMin: number,
+  cameraScale: number,
+  boundaryWorldR: number,
+  nodeCount: number
+): number {
+  const safeCount = Math.max(1, nodeCount);
+  const boundaryScreenR = Math.max(1, boundaryWorldR * cameraScale);
+  // Domain-aware baseline: larger cluster on screen + lower density => larger nodes.
+  const densityBase = boundaryScreenR / (14 + Math.sqrt(safeCount) * 0.9);
+  const viewportFloor = viewMin * 0.006;
+  const zoomBoost = Math.max(0.95, Math.min(1.9, Math.pow(Math.max(0.08, cameraScale), 0.2)));
+  return Math.max(5.2, Math.min(28, Math.max(viewportFloor, densityBase) * zoomBoost));
+}
+
 /* ── custom d3-force: soft circular boundary ──
  * Applies increasing inward pressure as nodes approach the boundary.
  * Unlike hard clamping, this lets force-directed layout find natural equilibrium INSIDE the circle.
@@ -125,6 +141,8 @@ interface MemSubNode extends SimulationNodeDatum {
   color: string;
   glow: string;
   emotion: string;
+  importance: number;
+  targetR: number;
 }
 
 interface MemSubLink extends SimulationLinkDatum<MemSubNode> {
@@ -137,6 +155,7 @@ interface ExpandInfo {
   cy: number;
   boundaryR: number;
   nodeWorldR: number;
+  memberCount: number;
 }
 
 interface Props {
@@ -145,8 +164,76 @@ interface Props {
   onMemoryClick: (memoryId: string) => void;
 }
 
+interface WebGLScene {
+  gl: WebGLRenderingContext;
+  pointProgram: WebGLProgram;
+  lineProgram: WebGLProgram;
+  pointPosBuffer: WebGLBuffer;
+  pointColorBuffer: WebGLBuffer;
+  pointImportanceBuffer: WebGLBuffer;
+  linePosBuffer: WebGLBuffer;
+  lineColorBuffer: WebGLBuffer;
+  pointPosLoc: number;
+  pointColorLoc: number;
+  pointImportanceLoc: number;
+  linePosLoc: number;
+  lineColorLoc: number;
+  pointCameraLoc: WebGLUniformLocation | null;
+  pointViewportLoc: WebGLUniformLocation | null;
+  pointSizeLoc: WebGLUniformLocation | null;
+  lineCameraLoc: WebGLUniformLocation | null;
+  lineViewportLoc: WebGLUniformLocation | null;
+}
+
+function parseHexColor(hex: string): [number, number, number] {
+  const raw = hex.trim();
+  const m = raw.match(/^#([0-9a-f]{6})$/i);
+  if (!m) return [1, 0.62, 0.26];
+  const v = parseInt(m[1], 16);
+  return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
+}
+
+function createShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {
+  const shader = gl.createShader(type);
+  if (!shader) return null;
+  gl.shaderSource(shader, src);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+function createProgram(gl: WebGLRenderingContext, vsSrc: string, fsSrc: string): WebGLProgram | null {
+  const vs = createShader(gl, gl.VERTEX_SHADER, vsSrc);
+  const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSrc);
+  if (!vs || !fs) {
+    if (vs) gl.deleteShader(vs);
+    if (fs) gl.deleteShader(fs);
+    return null;
+  }
+  const p = gl.createProgram();
+  if (!p) {
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    return null;
+  }
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    gl.deleteProgram(p);
+    return null;
+  }
+  return p;
+}
+
 export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const glCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<ReturnType<typeof forceSimulation<ClusterNode>> | null>(null);
   const simNodesRef = useRef<ClusterNode[]>([]);
@@ -158,6 +245,15 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const subRenderLinksRef = useRef<MemSubLink[]>([]);
   const hoveredNodeRef = useRef<number | null>(null);
   const hoveredMemRef = useRef<string | null>(null);
+  const panSnapshotRef = useRef<{
+    canvas: HTMLCanvasElement;
+    startCamX: number;
+    startCamY: number;
+    dpr: number;
+    vw: number;
+    vh: number;
+  } | null>(null);
+  const canvasMetricsRef = useRef<{ vw: number; vh: number; dpr: number }>({ vw: 0, vh: 0, dpr: 0 });
   const rafRef = useRef<number | null>(null);
   const labelsRef = useRef<Map<number, string>>(new Map());
   const expandInfoRef = useRef<ExpandInfo | null>(null);
@@ -165,6 +261,9 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const subTickLastCommitRef = useRef<number>(0);
   const expandBuildTokenRef = useRef<number>(0);
   const subSimStartTimerRef = useRef<number | null>(null);
+  const webglSceneRef = useRef<WebGLScene | null>(null);
+  const webglDataVersionRef = useRef<number>(0);
+  const webglUploadedVersionRef = useRef<number>(-1);
 
   // Camera
   const cameraRef = useRef<Camera>({ x: 0, y: 0, scale: 1 });
@@ -180,6 +279,120 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   useEffect(() => {
     expandedClusterRef.current = expandedCluster;
   }, [expandedCluster]);
+
+  useEffect(() => {
+    const canvas = glCanvasRef.current;
+    if (!canvas) return;
+    const gl = canvas.getContext('webgl', {
+      alpha: true,
+      antialias: true,
+      depth: false,
+      stencil: false,
+      premultipliedAlpha: true,
+      powerPreference: 'high-performance',
+    });
+    if (!gl) return;
+
+    const pointVs = `
+      attribute vec2 a_pos;
+      attribute vec4 a_color;
+      attribute float a_importance;
+      uniform vec3 u_camera;
+      uniform vec2 u_viewport;
+      uniform float u_pointSize;
+      varying vec4 v_color;
+      varying float v_importance;
+      void main() {
+        vec2 screen = vec2(a_pos.x * u_camera.z + u_camera.x, a_pos.y * u_camera.z + u_camera.y);
+        vec2 clip = vec2(screen.x / (u_viewport.x * 0.5) - 1.0, 1.0 - screen.y / (u_viewport.y * 0.5));
+        gl_Position = vec4(clip, 0.0, 1.0);
+        gl_PointSize = u_pointSize * (0.78 + a_importance * 1.9);
+        v_color = a_color;
+        v_importance = a_importance;
+      }
+    `;
+    const pointFs = `
+      precision mediump float;
+      varying vec4 v_color;
+      varying float v_importance;
+      void main() {
+        vec2 p = gl_PointCoord * 2.0 - 1.0;
+        float d = length(p);
+        if (d > 1.0) discard;
+        float core = smoothstep(0.68, 0.0, d);
+        float halo = smoothstep(1.0, 0.22, d);
+        float alpha = v_color.a * (core * 0.92 + halo * (0.36 + 0.24 * v_importance));
+        vec3 color = mix(v_color.rgb * 0.85, vec3(1.0), 0.06 + v_importance * 0.1);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `;
+    const lineVs = `
+      attribute vec2 a_pos;
+      attribute vec4 a_color;
+      uniform vec3 u_camera;
+      uniform vec2 u_viewport;
+      varying vec4 v_color;
+      void main() {
+        vec2 screen = vec2(a_pos.x * u_camera.z + u_camera.x, a_pos.y * u_camera.z + u_camera.y);
+        vec2 clip = vec2(screen.x / (u_viewport.x * 0.5) - 1.0, 1.0 - screen.y / (u_viewport.y * 0.5));
+        gl_Position = vec4(clip, 0.0, 1.0);
+        v_color = a_color;
+      }
+    `;
+    const lineFs = `
+      precision mediump float;
+      varying vec4 v_color;
+      void main() { gl_FragColor = v_color; }
+    `;
+
+    const pointProgram = createProgram(gl, pointVs, pointFs);
+    const lineProgram = createProgram(gl, lineVs, lineFs);
+    if (!pointProgram || !lineProgram) return;
+
+    const pointPosBuffer = gl.createBuffer();
+    const pointColorBuffer = gl.createBuffer();
+    const pointImportanceBuffer = gl.createBuffer();
+    const linePosBuffer = gl.createBuffer();
+    const lineColorBuffer = gl.createBuffer();
+    if (!pointPosBuffer || !pointColorBuffer || !pointImportanceBuffer || !linePosBuffer || !lineColorBuffer) return;
+
+    const scene: WebGLScene = {
+      gl,
+      pointProgram,
+      lineProgram,
+      pointPosBuffer,
+      pointColorBuffer,
+      pointImportanceBuffer,
+      linePosBuffer,
+      lineColorBuffer,
+      pointPosLoc: gl.getAttribLocation(pointProgram, 'a_pos'),
+      pointColorLoc: gl.getAttribLocation(pointProgram, 'a_color'),
+      pointImportanceLoc: gl.getAttribLocation(pointProgram, 'a_importance'),
+      linePosLoc: gl.getAttribLocation(lineProgram, 'a_pos'),
+      lineColorLoc: gl.getAttribLocation(lineProgram, 'a_color'),
+      pointCameraLoc: gl.getUniformLocation(pointProgram, 'u_camera'),
+      pointViewportLoc: gl.getUniformLocation(pointProgram, 'u_viewport'),
+      pointSizeLoc: gl.getUniformLocation(pointProgram, 'u_pointSize'),
+      lineCameraLoc: gl.getUniformLocation(lineProgram, 'u_camera'),
+      lineViewportLoc: gl.getUniformLocation(lineProgram, 'u_viewport'),
+    };
+    webglSceneRef.current = scene;
+
+    gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    return () => {
+      webglSceneRef.current = null;
+      gl.deleteBuffer(pointPosBuffer);
+      gl.deleteBuffer(pointColorBuffer);
+      gl.deleteBuffer(pointImportanceBuffer);
+      gl.deleteBuffer(linePosBuffer);
+      gl.deleteBuffer(lineColorBuffer);
+      gl.deleteProgram(pointProgram);
+      gl.deleteProgram(lineProgram);
+    };
+  }, []);
 
   // Interaction refs
   const dragRef = useRef<{ type: 'cluster' | 'mem' | 'pan'; id?: number | string } | null>(null);
@@ -201,6 +414,10 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
   const stopCameraAnim = useCallback(() => {
     animDurationRef.current = 0;
+  }, []);
+
+  const markWebGLDirty = useCallback(() => {
+    webglDataVersionRef.current += 1;
   }, []);
 
   // ── Clustering + caching ──
@@ -353,14 +570,14 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       // Keep expanded sub-graph rigidly attached to its parent cluster.
       const expand = expandInfoRef.current;
       const currentExpandedId = expandedClusterRef.current;
-      if (expand && currentExpandedId !== null && expand.clusterId === currentExpandedId && subSimRef.current) {
+      if (expand && currentExpandedId !== null && expand.clusterId === currentExpandedId && subNodesRef.current.length > 0) {
         const parent = simNodes.find((n) => n.id === currentExpandedId);
         if (parent && parent.x != null && parent.y != null) {
           const dx = parent.x - expand.cx;
           const dy = parent.y - expand.cy;
           if (Math.abs(dx) > 1e-6 || Math.abs(dy) > 1e-6) {
             const subSim = subSimRef.current;
-            const subSimNodes = subSim.nodes() as MemSubNode[];
+            const subSimNodes = subSim ? (subSim.nodes() as MemSubNode[]) : subNodesRef.current;
             for (const n of subSimNodes) {
               if (n.x != null) n.x += dx;
               if (n.y != null) n.y += dy;
@@ -368,25 +585,31 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
               if (n.fy != null) n.fy += dy;
             }
 
-            const centerForce = subSim.force('center') as { x?: (v: number) => unknown; y?: (v: number) => unknown } | null;
-            if (centerForce?.x) centerForce.x(parent.x);
-            if (centerForce?.y) centerForce.y(parent.y);
+            if (subSim) {
+              const centerForce = subSim.force('center') as { x?: (v: number) => unknown; y?: (v: number) => unknown } | null;
+              if (centerForce?.x) centerForce.x(parent.x);
+              if (centerForce?.y) centerForce.y(parent.y);
+              const radialForce = subSim.force('radial') as { x?: (v: number) => unknown; y?: (v: number) => unknown } | null;
+              if (radialForce?.x) radialForce.x(parent.x);
+              if (radialForce?.y) radialForce.y(parent.y);
 
-            const boundaryForce = subSim.force('boundary') as
-              | { center?: (x: number, y: number) => unknown }
-              | null;
-            if (boundaryForce?.center) boundaryForce.center(parent.x, parent.y);
+              const boundaryForce = subSim.force('boundary') as
+                | { center?: (x: number, y: number) => unknown }
+                | null;
+              if (boundaryForce?.center) boundaryForce.center(parent.x, parent.y);
+            }
 
             expand.cx = parent.x;
             expand.cy = parent.y;
             subNodesRef.current = subSimNodes;
+            markWebGLDirty();
           }
         }
       }
       clusterNodesRef.current = simNodes;
     });
     return () => { sim.stop(); simRef.current = null; };
-  }, [clusterNodes.length, clusterLinks.length]);
+  }, [clusterNodes.length, clusterLinks.length, markWebGLDirty]);
 
   // ── Expand cluster ──
   const expandCluster = useCallback((clusterId: number) => {
@@ -415,17 +638,19 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     const cx = cluster.x;
     const cy = cluster.y;
 
-    // ── Sizing: all relative to viewport ──
-    // Target: node appears as 0.25% of viewMin on screen (~2px on 800px viewport)
-    const nodeScreenR = viewMin * 0.0025;
+    // ── Sizing: domain-aware baseline (screen boundary + count) ──
     // Zoom: cluster circle fills 75% of viewport
     const zoomScale = (viewMin * 0.375) / clusterR;
+    const boundaryR = clusterR * 0.88; // keep inside the dashed circle
+    const boundaryScreenR = boundaryR * zoomScale;
+    const densityScreenR = boundaryScreenR / (14 + Math.sqrt(Math.max(1, memberCount)) * 0.9);
+    const nodeScreenR = Math.max(viewMin * 0.006, Math.min(22, densityScreenR));
     // World-space node radius at this zoom
     const nodeWorldR = nodeScreenR / zoomScale;
-    // Collide: center-to-center >= 4 * nodeWorldR → gap between edges >= 2 * nodeWorldR = 1 diameter
-    const collideR = nodeWorldR * 2;
+    // Collide radius tracks the new readable node size.
+    const collideR = nodeWorldR * 2.45;
 
-    expandInfoRef.current = { clusterId, cx, cy, boundaryR: clusterR, nodeWorldR };
+    expandInfoRef.current = { clusterId, cx, cy, boundaryR: clusterR, nodeWorldR, memberCount };
 
     animateCamera({
       x: vw / 2 - cx * zoomScale,
@@ -447,6 +672,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         memId: id,
         label: (mem?.text || id).slice(0, 30),
         color: style.color, glow: style.glow, emotion,
+        importance: 0.3,
+        targetR: clusterR * 0.5,
       };
     });
 
@@ -476,14 +703,37 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       links = links.sort((a, b) => b.similarity - a.similarity).slice(0, edgeBudget);
     }
 
+    // Structural importance: weighted by relationship strength + degree.
+    const weightedDegree = new Array(nodes.length).fill(0);
+    const degree = new Array(nodes.length).fill(0);
+    for (const l of links) {
+      const s = Number(l.source);
+      const t = Number(l.target);
+      if (!Number.isFinite(s) || !Number.isFinite(t)) continue;
+      weightedDegree[s] += l.similarity;
+      weightedDegree[t] += l.similarity;
+      degree[s] += 1;
+      degree[t] += 1;
+    }
+    const maxWeighted = Math.max(1e-6, ...weightedDegree);
+    const maxDegree = Math.max(1, ...degree);
+    for (let i = 0; i < nodes.length; i++) {
+      const wNorm = weightedDegree[i] / maxWeighted;
+      const dNorm = degree[i] / maxDegree;
+      const importance = Math.max(0.08, Math.min(1, 0.68 * wNorm + 0.32 * dNorm));
+      nodes[i].importance = importance;
+    }
+
     // ── Sub-force simulation ──
-    const boundaryR = clusterR * 0.88; // keep inside the dashed circle
     const simNodes = nodes.map((n) => ({ ...n }));
 
     // Initialize positions randomly within boundary (avoid center explosion)
     for (const n of simNodes) {
       const angle = hash(n.memId) * 2.399 + (hash(n.memId + 'x') * 0.001); // deterministic scatter
-      const r = (hash(n.memId + 'r') % 1000) / 1000 * boundaryR * 0.8;
+      const radialBias = 0.14 + (1 - n.importance) * 0.78;
+      n.targetR = boundaryR * radialBias;
+      const jitter = ((hash(n.memId + 'jr') % 1000) / 1000 - 0.5) * boundaryR * 0.08;
+      const r = Math.max(0, Math.min(boundaryR * 0.95, n.targetR + jitter));
       n.x = cx + Math.cos(angle) * r;
       n.y = cy + Math.sin(angle) * r;
     }
@@ -497,40 +747,11 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     } else {
       subRenderLinksRef.current = links;
     }
+    markWebGLDirty();
 
-    subSimStartTimerRef.current = window.setTimeout(() => {
-      if (expandBuildTokenRef.current !== buildToken || expandedClusterRef.current !== clusterId) return;
-      const sim = forceSimulation<MemSubNode>(simNodes)
-        .force('link', forceLink<MemSubNode, MemSubLink>(links as MemSubLink[])
-          .distance(collideR * 3).strength((l) => (l as MemSubLink).similarity * 0.28))
-        .force('charge', forceManyBody<MemSubNode>().strength(-collideR * 7))
-        .force('center', forceCenter(cx, cy).strength(0.05))
-        .force('collide', forceCollide<MemSubNode>().radius(collideR).strength(1))
-        .force('boundary', forceBoundary(cx, cy, boundaryR) as unknown as ReturnType<typeof forceManyBody>)
-        .alphaDecay(memberCount > 320 ? 0.03 : 0.02);
-
-      subSimRef.current = sim;
-      subTickLastCommitRef.current = 0;
-      sim.on('tick', () => {
-        // Hard clamp as safety net (soft force should keep most nodes inside)
-        for (const n of simNodes) {
-          if (n.x == null || n.y == null) continue;
-          const dx = n.x - cx;
-          const dy = n.y - cy;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist > boundaryR) {
-            n.x = cx + (dx / dist) * boundaryR;
-            n.y = cy + (dy / dist) * boundaryR;
-          }
-        }
-        const now = performance.now();
-        if (now - subTickLastCommitRef.current >= 33 || sim.alpha() < 0.05) {
-          subTickLastCommitRef.current = now;
-          subNodesRef.current = [...simNodes];
-        }
-      });
-    }, memberCount > 260 ? 220 : 80);
-  }, [expandedCluster, embeddingsData, memById, animateCamera]);
+    // Keep the first seeded frame as final layout (no sub-force simulation).
+    subSimRef.current = null;
+  }, [expandedCluster, embeddingsData, memById, animateCamera, markWebGLDirty]);
 
   const collapseCluster = useCallback(() => {
     if (subSimRef.current) subSimRef.current.stop();
@@ -543,10 +764,11 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     subNodesRef.current = [];
     subLinksRef.current = [];
     subRenderLinksRef.current = [];
+    markWebGLDirty();
     hoveredMemRef.current = null;
     expandInfoRef.current = null;
     animateCamera({ x: 0, y: 0, scale: 1 }, 400);
-  }, [animateCamera]);
+  }, [animateCamera, markWebGLDirty]);
 
   // ── Canvas rendering ──
   useEffect(() => {
@@ -559,15 +781,169 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const vh = container.clientHeight;
       const dpr = Math.max(1, window.devicePixelRatio || 1);
 
-      canvas.width = Math.floor(vw * dpr);
-      canvas.height = Math.floor(vh * dpr);
-      canvas.style.width = `${vw}px`;
-      canvas.style.height = `${vh}px`;
+      // Resize only when metrics change; rebuilding canvas every frame is expensive.
+      if (
+        canvasMetricsRef.current.vw !== vw ||
+        canvasMetricsRef.current.vh !== vh ||
+        canvasMetricsRef.current.dpr !== dpr
+      ) {
+        canvasMetricsRef.current = { vw, vh, dpr };
+        canvas.width = Math.floor(vw * dpr);
+        canvas.height = Math.floor(vh * dpr);
+        canvas.style.width = `${vw}px`;
+        canvas.style.height = `${vh}px`;
+      }
 
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, vw, vh);
+
+      const drawWebGLSubgraph = () => {
+        const scene = webglSceneRef.current;
+        const glCanvas = glCanvasRef.current;
+        if (!scene || !glCanvas) return false;
+
+        if (glCanvas.width !== Math.floor(vw * dpr) || glCanvas.height !== Math.floor(vh * dpr)) {
+          glCanvas.width = Math.floor(vw * dpr);
+          glCanvas.height = Math.floor(vh * dpr);
+          glCanvas.style.width = `${vw}px`;
+          glCanvas.style.height = `${vh}px`;
+        }
+
+        const { gl } = scene;
+        gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        const currentExpandedId = expandedClusterRef.current;
+        const nodes = subNodesRef.current;
+        const edges = subRenderLinksRef.current;
+        if (currentExpandedId == null || nodes.length === 0) return true;
+
+        if (webglUploadedVersionRef.current !== webglDataVersionRef.current) {
+          const pointPos = new Float32Array(nodes.length * 2);
+          const pointColor = new Float32Array(nodes.length * 4);
+          const pointImportance = new Float32Array(nodes.length);
+          for (let i = 0; i < nodes.length; i++) {
+            const n = nodes[i];
+            pointPos[i * 2] = n.x || 0;
+            pointPos[i * 2 + 1] = n.y || 0;
+            const [r, g, b] = parseHexColor(n.color);
+            const imp = Math.max(0, Math.min(1, n.importance || 0));
+            pointImportance[i] = imp;
+            pointColor[i * 4] = r * (0.82 + imp * 0.24);
+            pointColor[i * 4 + 1] = g * (0.82 + imp * 0.24);
+            pointColor[i * 4 + 2] = b * (0.82 + imp * 0.24);
+            pointColor[i * 4 + 3] = 0.8 + imp * 0.2;
+          }
+
+          const linePos = new Float32Array(edges.length * 4);
+          const lineColor = new Float32Array(edges.length * 8);
+          for (let i = 0; i < edges.length; i++) {
+            const link = edges[i];
+            const si = typeof link.source === 'number' ? link.source : -1;
+            const ti = typeof link.target === 'number' ? link.target : -1;
+            const s = si >= 0 ? nodes[si] : null;
+            const t = ti >= 0 ? nodes[ti] : null;
+            if (!s || !t) {
+              linePos[i * 4] = 0;
+              linePos[i * 4 + 1] = 0;
+              linePos[i * 4 + 2] = 0;
+              linePos[i * 4 + 3] = 0;
+              continue;
+            }
+            linePos[i * 4] = s.x || 0;
+            linePos[i * 4 + 1] = s.y || 0;
+            linePos[i * 4 + 2] = t.x || 0;
+            linePos[i * 4 + 3] = t.y || 0;
+            const impAvg = ((s.importance || 0.3) + (t.importance || 0.3)) * 0.5;
+            const sim = Math.max(0, Math.min(1, link.similarity));
+            const a = 0.02 + sim * 0.13 + impAvg * 0.09;
+            const r = 0.56 + sim * 0.22 + impAvg * 0.1;
+            const g = 0.68 + sim * 0.16 + impAvg * 0.1;
+            const b = 0.9 + sim * 0.08;
+            for (let k = 0; k < 2; k++) {
+              const base = i * 8 + k * 4;
+              lineColor[base] = Math.min(1, r);
+              lineColor[base + 1] = Math.min(1, g);
+              lineColor[base + 2] = Math.min(1, b);
+              lineColor[base + 3] = a;
+            }
+          }
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointPosBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, pointPos, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointColorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, pointColor, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointImportanceBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, pointImportance, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, scene.linePosBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, linePos, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, scene.lineColorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, lineColor, gl.DYNAMIC_DRAW);
+          webglUploadedVersionRef.current = webglDataVersionRef.current;
+        }
+
+        const camNow = cameraRef.current;
+        const viewMin = Math.min(vw, vh);
+        const expand = expandInfoRef.current;
+        const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, camNow.scale)) * 0.88;
+        const pointPx = subNodeBaseScreenPx(viewMin, camNow.scale, boundaryWorldR, nodes.length);
+
+        if (edges.length > 0) {
+          gl.useProgram(scene.lineProgram);
+          gl.uniform3f(scene.lineCameraLoc, camNow.x, camNow.y, camNow.scale);
+          gl.uniform2f(scene.lineViewportLoc, vw, vh);
+          gl.bindBuffer(gl.ARRAY_BUFFER, scene.linePosBuffer);
+          gl.enableVertexAttribArray(scene.linePosLoc);
+          gl.vertexAttribPointer(scene.linePosLoc, 2, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, scene.lineColorBuffer);
+          gl.enableVertexAttribArray(scene.lineColorLoc);
+          gl.vertexAttribPointer(scene.lineColorLoc, 4, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.LINES, 0, edges.length * 2);
+        }
+
+        gl.useProgram(scene.pointProgram);
+        gl.uniform3f(scene.pointCameraLoc, camNow.x, camNow.y, camNow.scale);
+        gl.uniform2f(scene.pointViewportLoc, vw, vh);
+        gl.uniform1f(scene.pointSizeLoc, pointPx);
+        gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointPosBuffer);
+        gl.enableVertexAttribArray(scene.pointPosLoc);
+        gl.vertexAttribPointer(scene.pointPosLoc, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointColorBuffer);
+        gl.enableVertexAttribArray(scene.pointColorLoc);
+        gl.vertexAttribPointer(scene.pointColorLoc, 4, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointImportanceBuffer);
+        gl.enableVertexAttribArray(scene.pointImportanceLoc);
+        gl.vertexAttribPointer(scene.pointImportanceLoc, 1, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.POINTS, 0, nodes.length);
+        return true;
+      };
+
+      const drag = dragRef.current;
+      const panSnapshot = panSnapshotRef.current;
+      if (drag?.type === 'pan' && panSnapshot) {
+        // Fast path during pan: blit snapshot with camera delta instead of redrawing whole scene.
+        const bg = ctx.createLinearGradient(0, 0, vw, vh);
+        bg.addColorStop(0, '#070a14');
+        bg.addColorStop(1, '#080e1f');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, vw, vh);
+
+        const dx = cameraRef.current.x - panSnapshot.startCamX;
+        const dy = cameraRef.current.y - panSnapshot.startCamY;
+        ctx.drawImage(
+          panSnapshot.canvas,
+          dx * (dpr / panSnapshot.dpr),
+          dy * (dpr / panSnapshot.dpr),
+          panSnapshot.vw * (dpr / panSnapshot.dpr),
+          panSnapshot.vh * (dpr / panSnapshot.dpr)
+        );
+        drawWebGLSubgraph();
+        rafRef.current = requestAnimationFrame(render);
+        return;
+      }
 
       // Background
       const bg = ctx.createLinearGradient(0, 0, vw, vh);
@@ -588,6 +964,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       }
 
       const cam = cameraRef.current;
+      const useWebGLSub = drawWebGLSubgraph();
 
       ctx.save();
       ctx.translate(cam.x, cam.y);
@@ -600,7 +977,6 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const clusterNodesNow = clusterNodesRef.current;
       const clusterLinksNow = clusterLinksRef.current;
       const subNodesNow = subNodesRef.current;
-      const subEdgesNow = subRenderLinksRef.current;
       const hoveredNode = hoveredNodeRef.current;
       const hoveredMem = hoveredMemRef.current;
       const clusterById = new Map<number, ClusterNode>();
@@ -635,7 +1011,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       }
 
       // ── Sub-graph edges ──
-      if (isExpMode && subNodesNow.length > 0) {
+      if (!useWebGLSub && isExpMode && subNodesNow.length > 0) {
+        const subEdgesNow = subRenderLinksRef.current;
         for (const link of subEdgesNow) {
           const si = typeof link.source === 'number' ? link.source : (link.source as MemSubNode);
           const ti = typeof link.target === 'number' ? link.target : (link.target as MemSubNode);
@@ -708,18 +1085,20 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       }
 
       // ── Sub-nodes: screen-relative sizing ──
-      if (isExpMode) {
-        // Node radius = 0.25% of viewport min dimension, in world coords
-        const nodeScreenR = viewMin * 0.0025;
+      if (!useWebGLSub && isExpMode) {
+        const expand = expandInfoRef.current;
+        const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, cam.scale)) * 0.88;
+        const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
         const nodeWorldR = nodeScreenR * invS;
 
         for (const sn of subNodesNow) {
           if (sn.x == null || sn.y == null) continue;
           const isHov = hoveredMem === sn.memId;
-          const r = isHov ? nodeWorldR * 1.8 : nodeWorldR;
+          const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
+          const r = isHov ? baseR * 1.35 : baseR;
 
           ctx.save();
-          ctx.shadowBlur = (isHov ? 12 : 4) * invS;
+          ctx.shadowBlur = (isHov ? 14 : 5 + (sn.importance || 0) * 3) * invS;
           ctx.shadowColor = sn.glow;
           ctx.beginPath();
           ctx.arc(sn.x, sn.y, r, 0, Math.PI * 2);
@@ -745,6 +1124,31 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
             ctx.fillText(txt, sn.x, sn.y - r - 4 * invS);
             ctx.restore();
           }
+        }
+      }
+
+      if (useWebGLSub && isExpMode && hoveredMem) {
+        const sn = subNodesNow.find((n) => n.memId === hoveredMem);
+        if (sn && sn.x != null && sn.y != null) {
+          const expand = expandInfoRef.current;
+          const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, cam.scale)) * 0.88;
+          const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
+          const nodeWorldR = nodeScreenR * invS;
+          const r = nodeWorldR * 1.8;
+          ctx.save();
+          const fs = 11 * invS;
+          ctx.font = `500 ${fs}px "Avenir Next", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          const txt = sn.label;
+          const tw = ctx.measureText(txt).width;
+          const px = 4 * invS;
+          const py = 2 * invS;
+          ctx.fillStyle = 'rgba(8,14,31,0.85)';
+          ctx.fillRect(sn.x - tw / 2 - px, sn.y - r - 14 * invS - py, tw + px * 2, 12 * invS + py * 2);
+          ctx.fillStyle = '#f0f7ff';
+          ctx.fillText(txt, sn.x, sn.y - r - 4 * invS);
+          ctx.restore();
         }
       }
 
@@ -814,10 +1218,16 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const findNode = useCallback(
     (wx: number, wy: number): { type: 'cluster' | 'mem'; node: ClusterNode | MemSubNode } | null => {
       if (expandedClusterRef.current !== null) {
+        const metrics = canvasMetricsRef.current;
+        const viewMin = Math.max(1, Math.min(metrics.vw || 1, metrics.vh || 1));
+        const camScale = cameraRef.current.scale;
+        const expand = expandInfoRef.current;
+        const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, camScale)) * 0.88;
+        const nodeScreenBase = subNodeBaseScreenPx(viewMin, camScale, boundaryWorldR, subNodesRef.current.length);
         for (const sn of subNodesRef.current) {
           if (sn.x == null || sn.y == null) continue;
           const dx = wx - sn.x; const dy = wy - sn.y;
-          const hitR = 8 / cameraRef.current.scale + 4;
+          const hitR = (nodeScreenBase * (0.72 + (sn.importance || 0) * 0.95)) / camScale + 5;
           if (dx * dx + dy * dy < hitR * hitR) return { type: 'mem', node: sn };
         }
       }
@@ -857,6 +1267,22 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       stopCameraAnim();
       dragRef.current = { type: 'pan' };
       panStartCamRef.current = { x: cameraRef.current.x, y: cameraRef.current.y };
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const snap = document.createElement('canvas');
+        snap.width = canvas.width;
+        snap.height = canvas.height;
+        const snapCtx = snap.getContext('2d');
+        if (snapCtx) snapCtx.drawImage(canvas, 0, 0);
+        panSnapshotRef.current = {
+          canvas: snap,
+          startCamX: cameraRef.current.x,
+          startCamY: cameraRef.current.y,
+          dpr: canvasMetricsRef.current.dpr || Math.max(1, window.devicePixelRatio || 1),
+          vw: canvasMetricsRef.current.vw || canvas.clientWidth,
+          vh: canvasMetricsRef.current.vh || canvas.clientHeight,
+        };
+      }
     }
   }, [findNode, getWorldPos, stopCameraAnim]);
 
@@ -885,7 +1311,11 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         if (node && simRef.current) { node.fx = x; node.fy = y; simRef.current.alpha(0.3).restart(); }
       } else if (drag.type === 'mem') {
         const node = subNodesRef.current.find((n) => n.memId === drag.id);
-        if (node && subSimRef.current) { node.fx = x; node.fy = y; subSimRef.current.alpha(0.3).restart(); }
+        if (node) {
+          node.x = x; node.y = y;
+          node.fx = x; node.fy = y;
+          markWebGLDirty();
+        }
       }
       return;
     }
@@ -905,7 +1335,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       hoveredNodeRef.current = null;
       hoveredMemRef.current = null;
     }
-  }, [findNode, getWorldPos]);
+  }, [findNode, getWorldPos, markWebGLDirty]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     const drag = dragRef.current;
@@ -939,6 +1369,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
     dragRef.current = null;
     mouseDownScreenRef.current = null;
+    panSnapshotRef.current = null;
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = 'grab';
   }, [findNode, getWorldPos, expandCluster, collapseCluster, onMemoryClick]);
@@ -956,6 +1387,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       dragRef.current = null;
       mouseDownScreenRef.current = null;
     }
+    panSnapshotRef.current = null;
     hoveredNodeRef.current = null;
     hoveredMemRef.current = null;
   }, []);
@@ -974,6 +1406,11 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
   return (
     <div ref={containerRef} className="cluster-graph-container">
+      <canvas
+        ref={glCanvasRef}
+        className="cluster-graph-webgl"
+        aria-hidden
+      />
       <canvas
         ref={canvasRef}
         style={{ cursor: 'grab' }}
