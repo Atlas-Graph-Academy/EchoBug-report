@@ -258,6 +258,7 @@ export default function MemoryPreviewCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const constellationMainRef = useRef<HTMLDivElement>(null);
   const metaMenuRef = useRef<HTMLDivElement>(null);
+  const detailCardRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -276,6 +277,8 @@ export default function MemoryPreviewCanvas() {
   const [showDetails, setShowDetails] = useState(false);
   const [showMetaMenu, setShowMetaMenu] = useState(false);
   const [constellationDetailAnchor, setConstellationDetailAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [isDetailDetached, setIsDetailDetached] = useState(false);
+  const [detachedDetailPosition, setDetachedDetailPosition] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -650,6 +653,8 @@ export default function MemoryPreviewCanvas() {
     setNarrativeMemoryId(nodeId);
     setShowDetails(false);
     setShowMetaMenu(false);
+    setIsDetailDetached(false);
+    setDetachedDetailPosition(null);
   }, [sortedRecords]);
 
   const handleConstellationMemoryClick = useCallback((memoryId: string, anchor?: { clientX: number; clientY: number }) => {
@@ -681,6 +686,8 @@ export default function MemoryPreviewCanvas() {
     setNarrativeMemoryId(memoryId);
     setShowDetails(false);
     setShowMetaMenu(false);
+    setIsDetailDetached(false);
+    setDetachedDetailPosition(null);
 
     if (anchor && constellationMainRef.current) {
       const rect = constellationMainRef.current.getBoundingClientRect();
@@ -697,6 +704,8 @@ export default function MemoryPreviewCanvas() {
     setConstellationFocusActive(false);
     setShowDetails(false);
     setShowMetaMenu(false);
+    setIsDetailDetached(false);
+    setDetachedDetailPosition(null);
   }, []);
 
   const clearConstellationFocus = useCallback(() => {
@@ -714,16 +723,24 @@ export default function MemoryPreviewCanvas() {
     const topSafe = 58;
     const sideSafe = 12;
     const main = constellationMainRef.current;
+
+    if (isDetailDetached && detachedDetailPosition) {
+      const left = clamp(detachedDetailPosition.left, sideSafe, Math.max(sideSafe, main.clientWidth - cardW - sideSafe));
+      const top = clamp(detachedDetailPosition.top, topSafe, Math.max(topSafe, main.clientHeight - 220));
+      return { left: `${left}px`, top: `${top}px` };
+    }
+
     const baseX = constellationDetailAnchor ? constellationDetailAnchor.x + 14 : main.clientWidth - cardW - 24;
     const baseY = constellationDetailAnchor ? constellationDetailAnchor.y + 10 : topSafe + 14;
 
     const left = clamp(baseX, sideSafe, Math.max(sideSafe, main.clientWidth - cardW - sideSafe));
     const top = clamp(baseY, topSafe, Math.max(topSafe, main.clientHeight - 220));
     return { left: `${left}px`, top: `${top}px` };
-  }, [showConstellationDetail, constellationDetailAnchor]);
+  }, [showConstellationDetail, constellationDetailAnchor, isDetailDetached, detachedDetailPosition]);
 
   const handleConstellationFocusAnchorChange = useCallback((anchor?: { clientX: number; clientY: number }) => {
     if (!showConstellationDetail || !constellationMainRef.current) return;
+    if (isDetailDetached) return;
     if (!anchor) return;
 
     const rect = constellationMainRef.current.getBoundingClientRect();
@@ -734,12 +751,59 @@ export default function MemoryPreviewCanvas() {
       if (prev && Math.abs(prev.x - localX) < 1 && Math.abs(prev.y - localY) < 1) return prev;
       return { x: localX, y: localY };
     });
+  }, [showConstellationDetail, isDetailDetached]);
+
+  const handleDetailDragStart = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (!showConstellationDetail || !constellationMainRef.current || !detailCardRef.current) return;
+
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input, textarea, select, .memory-detail-menu-popover')) return;
+
+    event.preventDefault();
+    setShowMetaMenu(false);
+
+    const mainRect = constellationMainRef.current.getBoundingClientRect();
+    const cardRect = detailCardRef.current.getBoundingClientRect();
+    const offsetX = event.clientX - cardRect.left;
+    const offsetY = event.clientY - cardRect.top;
+
+    document.body.classList.add('memory-detail-dragging');
+    setIsDetailDetached(true);
+
+    const onMove = (ev: MouseEvent) => {
+      const cardW = cardRect.width;
+      const cardH = cardRect.height;
+      const sideSafe = 12;
+      const topSafe = 58;
+      const nextLeft = clamp(
+        ev.clientX - mainRect.left - offsetX,
+        sideSafe,
+        Math.max(sideSafe, mainRect.width - cardW - sideSafe),
+      );
+      const nextTop = clamp(
+        ev.clientY - mainRect.top - offsetY,
+        topSafe,
+        Math.max(topSafe, mainRect.height - cardH - sideSafe),
+      );
+      setDetachedDetailPosition({ left: Math.round(nextLeft), top: Math.round(nextTop) });
+    };
+
+    const onUp = () => {
+      document.body.classList.remove('memory-detail-dragging');
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }, [showConstellationDetail]);
 
   const detailCard = selectedRecord && (
     <article
+      ref={detailCardRef}
       className={`memory-detail-card memory-detail-card-compact${showConstellationDetail ? ' memory-detail-card-floating' : ''}`}
       style={showConstellationDetail ? constellationDetailStyle : undefined}
+      onMouseDown={showConstellationDetail ? handleDetailDragStart : undefined}
     >
       {showConstellationDetail && <div className="memory-detail-pointer" aria-hidden />}
       <header className="memory-detail-header">

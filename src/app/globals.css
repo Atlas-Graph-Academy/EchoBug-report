@@ -891,6 +891,10 @@ main {
   position: absolute;
   z-index: 42;
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+.memory-detail-card-floating:active {
+  cursor: grabbing;
 }
 .memory-detail-sidebar {
   width: min(520px, 40vw);
@@ -998,6 +1002,9 @@ main {
 }
 .memory-detail-close-danger:hover {
   background: rgba(153, 27, 27, 0.78);
+}
+body.memory-detail-dragging {
+  cursor: grabbing;
 }
 .memory-detail-meta {
   margin-top: 14px;
