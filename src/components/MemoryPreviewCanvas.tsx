@@ -529,6 +529,29 @@ export default function MemoryPreviewCanvas() {
       surpriseRange: [0.25, 0.4],
     });
 
+    const primarySequence = [
+      ...chains.primary.upstream,
+      currentNode,
+      ...chains.primary.downstream,
+    ].sort((a, b) => {
+      const ta = new Date(a.createdAt).getTime();
+      const tb = new Date(b.createdAt).getTime();
+      return (Number.isNaN(ta) ? 0 : ta) - (Number.isNaN(tb) ? 0 : tb);
+    });
+
+    const listedSet = new Set<string>();
+    const listedIds: string[] = [];
+    const pushListed = (id: string) => {
+      if (!id || listedSet.has(id)) return;
+      listedSet.add(id);
+      listedIds.push(id);
+    };
+
+    for (const node of primarySequence) pushListed(node.id);
+    for (const node of chains.objectChain) pushListed(node.id);
+    for (const node of chains.categoryChain) pushListed(node.id);
+    if (chains.surprise) pushListed(chains.surprise.id);
+
     return {
       currentMemory: currentNode,
       chains: {
@@ -538,6 +561,8 @@ export default function MemoryPreviewCanvas() {
         categoryChain: chains.categoryChain,
         surprise: chains.surprise,
       },
+      primarySequenceIds: primarySequence.map((node) => node.id),
+      listedIds,
     };
   }, [narrativeMemoryId, memoryNodes, embeddingsData]);
 
@@ -756,6 +781,8 @@ export default function MemoryPreviewCanvas() {
                 memories={memoryNodes}
                 embeddingsData={embeddingsData}
                 onMemoryClick={handleConstellationMemoryClick}
+                highlightedMemoryIds={showConstellationDetail ? (narrativeContext?.listedIds ?? []) : []}
+                sequenceMemoryIds={showConstellationDetail ? (narrativeContext?.primarySequenceIds ?? []) : []}
               />
             )
           )}

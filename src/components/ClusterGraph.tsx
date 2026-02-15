@@ -176,11 +176,26 @@ interface Props {
   memories: MemoryNode[];
   embeddingsData: EmbeddingsData;
   onMemoryClick: (memoryId: string) => void;
+  highlightedMemoryIds?: string[];
+  sequenceMemoryIds?: string[];
+}
+
+function sameIdList(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true;
+  const left = a || [];
+  const right = b || [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
 }
 
 function arePropsEqual(prev: Props, next: Props): boolean {
   if (prev.onMemoryClick !== next.onMemoryClick) return false;
   if (prev.embeddingsData !== next.embeddingsData) return false;
+  if (!sameIdList(prev.highlightedMemoryIds, next.highlightedMemoryIds)) return false;
+  if (!sameIdList(prev.sequenceMemoryIds, next.sequenceMemoryIds)) return false;
   if (prev.memories === next.memories) return true;
   if (prev.memories.length !== next.memories.length) return false;
   if (prev.memories.length === 0) return true;
@@ -309,7 +324,13 @@ function drawSmoothBundle(ctx: CanvasRenderingContext2D, points: BundlePathPoint
   ctx.lineTo(last.x, last.y);
 }
 
-function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
+function ClusterGraph({
+  memories,
+  embeddingsData,
+  onMemoryClick,
+  highlightedMemoryIds = [],
+  sequenceMemoryIds = [],
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -324,6 +345,8 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
   const subBundlePathsRef = useRef<SubBundlePath[]>([]);
   const selectedMemRef = useRef<string | null>(null);
   const subLinesVisibleAfterRef = useRef<number>(0);
+  const highlightedMemoryIdsRef = useRef<string[]>([]);
+  const sequenceMemoryIdsRef = useRef<string[]>([]);
   const hoveredNodeRef = useRef<number | null>(null);
   const hoveredMemRef = useRef<string | null>(null);
   const canvasMetricsRef = useRef<{ vw: number; vh: number; dpr: number }>({ vw: 0, vh: 0, dpr: 0 });
@@ -352,6 +375,14 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
   useEffect(() => {
     expandedClusterRef.current = expandedCluster;
   }, [expandedCluster]);
+
+  useEffect(() => {
+    highlightedMemoryIdsRef.current = highlightedMemoryIds;
+  }, [highlightedMemoryIds]);
+
+  useEffect(() => {
+    sequenceMemoryIdsRef.current = sequenceMemoryIds;
+  }, [sequenceMemoryIds]);
 
   useEffect(() => {
     const canvas = glCanvasRef.current;
@@ -1140,8 +1171,12 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
         const currentExpandedId = expandedClusterRef.current;
         const nodes = subNodesRef.current;
         if (currentExpandedId == null || nodes.length === 0) return true;
+        const highlightedNow = highlightedMemoryIdsRef.current;
+        const focusModeNow = highlightedNow.length > 0;
+        const highlightedSetNow = focusModeNow ? new Set(highlightedNow) : null;
+        const nowMs = performance.now();
 
-        if (webglUploadedVersionRef.current !== webglDataVersionRef.current) {
+        if (webglUploadedVersionRef.current !== webglDataVersionRef.current || focusModeNow) {
           const pointPos = new Float32Array(nodes.length * 2);
           const pointColor = new Float32Array(nodes.length * 4);
           const pointImportance = new Float32Array(nodes.length);
@@ -1152,10 +1187,21 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
             const [r, g, b] = parseHexColor(n.color);
             const imp = Math.max(0, Math.min(1, n.importance || 0));
             pointImportance[i] = imp;
-            pointColor[i * 4] = r * (0.82 + imp * 0.24);
-            pointColor[i * 4 + 1] = g * (0.82 + imp * 0.24);
-            pointColor[i * 4 + 2] = b * (0.82 + imp * 0.24);
-            pointColor[i * 4 + 3] = 0.8 + imp * 0.2;
+            const baseMul = 0.82 + imp * 0.24;
+            if (focusModeNow && highlightedSetNow) {
+              const isHighlighted = highlightedSetNow.has(n.memId);
+              const blink = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(nowMs * 0.011 + hash(n.memId) * 0.0008));
+              const lum = isHighlighted ? (0.96 + 0.26 * blink) : 0.66;
+              pointColor[i * 4] = Math.min(1, r * baseMul * lum);
+              pointColor[i * 4 + 1] = Math.min(1, g * baseMul * lum);
+              pointColor[i * 4 + 2] = Math.min(1, b * baseMul * lum);
+              pointColor[i * 4 + 3] = isHighlighted ? (0.8 + 0.2 * blink) : 0.12;
+            } else {
+              pointColor[i * 4] = r * baseMul;
+              pointColor[i * 4 + 1] = g * baseMul;
+              pointColor[i * 4 + 2] = b * baseMul;
+              pointColor[i * 4 + 3] = 0.8 + imp * 0.2;
+            }
           }
 
           gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointPosBuffer);
@@ -1164,7 +1210,7 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
           gl.bufferData(gl.ARRAY_BUFFER, pointColor, gl.DYNAMIC_DRAW);
           gl.bindBuffer(gl.ARRAY_BUFFER, scene.pointImportanceBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, pointImportance, gl.DYNAMIC_DRAW);
-          webglUploadedVersionRef.current = webglDataVersionRef.current;
+          if (!focusModeNow) webglUploadedVersionRef.current = webglDataVersionRef.current;
         }
 
         const camNow = cameraRef.current;
@@ -1209,7 +1255,7 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
       }
 
       const cam = cameraRef.current;
-      const useWebGLSub = drawWebGLSubgraph();
+      const useWebGLSubRaw = drawWebGLSubgraph();
 
       ctx.save();
       ctx.translate(cam.x, cam.y);
@@ -1225,8 +1271,45 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
       const hoveredNode = hoveredNodeRef.current;
       const hoveredMem = hoveredMemRef.current;
       const selectedMem = selectedMemRef.current;
+      const highlightedMemoryIdsNow = highlightedMemoryIdsRef.current;
+      const sequenceMemoryIdsNow = sequenceMemoryIdsRef.current;
+      const highlightedSet = new Set(highlightedMemoryIdsNow);
+      const focusMode = highlightedSet.size > 0;
+      const useWebGLSub = useWebGLSubRaw;
       const clusterById = new Map<number, ClusterNode>();
       for (const n of clusterNodesNow) clusterById.set(n.id, n);
+      const highlightedByCluster = new Map<number, string[]>();
+      if (focusMode) {
+        for (const cluster of clusterNodesNow) {
+          const relatedIds = cluster.memberIds.filter((id) => highlightedSet.has(id));
+          if (relatedIds.length > 0) highlightedByCluster.set(cluster.id, relatedIds);
+        }
+      }
+      const subNodeByMemId = new Map<string, MemSubNode>();
+      for (const sn of subNodesNow) subNodeByMemId.set(sn.memId, sn);
+      const focusPointByMemId = new Map<string, { x: number; y: number; virtual: boolean }>();
+      if (focusMode) {
+        for (const cluster of clusterNodesNow) {
+          if (cluster.x == null || cluster.y == null) continue;
+          const relatedIds = highlightedByCluster.get(cluster.id);
+          if (!relatedIds || relatedIds.length === 0) continue;
+          for (const memId of relatedIds) {
+            const sn = subNodeByMemId.get(memId);
+            if (sn && sn.x != null && sn.y != null) {
+              focusPointByMemId.set(memId, { x: sn.x, y: sn.y, virtual: false });
+              continue;
+            }
+            const seed = hash(`${cluster.id}:${memId}:focus-point`);
+            const angle = ((seed % 1000) / 1000) * Math.PI * 2;
+            const radial = cluster.radius * (0.22 + (((seed >>> 10) % 1000) / 1000) * 0.6);
+            focusPointByMemId.set(memId, {
+              x: cluster.x + Math.cos(angle) * radial,
+              y: cluster.y + Math.sin(angle) * radial,
+              virtual: true,
+            });
+          }
+        }
+      }
       const worldLeft = -cam.x * invS;
       const worldTop = -cam.y * invS;
       const worldRight = (vw - cam.x) * invS;
@@ -1338,10 +1421,11 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
       const pendingEdgeEndLabels: Array<{ x: number; y: number; text: string; color: string }> = [];
       const pendingClusterLabels: Array<{ node: ClusterNode; alpha: number; hovered: boolean }> = [];
       const pendingMemLabels: Array<{ sn: MemSubNode; anchorR: number; variant: 'hover' | 'auto' }> = [];
+      const pendingFocusNodeLabels: Array<{ x: number; y: number; text: string; color: string }> = [];
 
       // ── Cluster edges ──
       let hasExpandedEdgeClip = false;
-      if (isExpMode && currentExpandedId !== null) {
+      if (!focusMode && isExpMode && currentExpandedId !== null) {
         const expandedNode = clusterById.get(currentExpandedId);
         if (expandedNode && expandedNode.x != null && expandedNode.y != null) {
           const expand = expandInfoRef.current;
@@ -1365,11 +1449,15 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
       }
 
       for (const link of clusterLinksNow) {
+        if (focusMode) continue;
         const s = typeof link.source === 'object' ? link.source : clusterById.get(Number(link.source));
         const t = typeof link.target === 'object' ? link.target : clusterById.get(Number(link.target));
         if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
         const sourceId = typeof link.source === 'object' ? (link.source as ClusterNode).id : Number(link.source);
         const targetId = typeof link.target === 'object' ? (link.target as ClusterNode).id : Number(link.target);
+        const sourceRelated = highlightedByCluster.has(sourceId);
+        const targetRelated = highlightedByCluster.has(targetId);
+        if (focusMode && (!sourceRelated || !targetRelated)) continue;
 
         let sx = s.x;
         let sy = s.y;
@@ -1443,8 +1531,62 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
       }
       if (hasExpandedEdgeClip) ctx.restore();
 
+      // ── Narrative sequence path (from side narrative graph) ──
+      if (sequenceMemoryIdsNow.length > 1 && highlightedSet.size > 0) {
+        const resolvePoint = (memId: string): { x: number; y: number } | null => {
+          const focusPoint = focusPointByMemId.get(memId);
+          if (focusPoint) return { x: focusPoint.x, y: focusPoint.y };
+          const subNode = subNodeByMemId.get(memId);
+          if (subNode && subNode.x != null && subNode.y != null) {
+            return { x: subNode.x, y: subNode.y };
+          }
+          for (const cluster of clusterNodesNow) {
+            if (cluster.x == null || cluster.y == null) continue;
+            if (cluster.memberIds.includes(memId)) {
+              return { x: cluster.x, y: cluster.y };
+            }
+          }
+          return null;
+        };
+
+        const seqPoints: Array<{ x: number; y: number }> = [];
+        let lastKey = '';
+        for (const memId of sequenceMemoryIdsNow) {
+          const point = resolvePoint(memId);
+          if (!point) continue;
+          const key = `${Math.round(point.x * 10)}|${Math.round(point.y * 10)}`;
+          if (key === lastKey) continue;
+          seqPoints.push(point);
+          lastKey = key;
+        }
+
+        if (seqPoints.length > 1) {
+          ctx.save();
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = 'rgba(94, 234, 212, 0.22)';
+          ctx.lineWidth = 7.5 * invS;
+          ctx.beginPath();
+          ctx.moveTo(seqPoints[0].x, seqPoints[0].y);
+          for (let i = 1; i < seqPoints.length; i += 1) {
+            ctx.lineTo(seqPoints[i].x, seqPoints[i].y);
+          }
+          ctx.stroke();
+
+          ctx.strokeStyle = 'rgba(94, 234, 212, 0.72)';
+          ctx.lineWidth = 2.15 * invS;
+          ctx.beginPath();
+          ctx.moveTo(seqPoints[0].x, seqPoints[0].y);
+          for (let i = 1; i < seqPoints.length; i += 1) {
+            ctx.lineTo(seqPoints[i].x, seqPoints[i].y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       // ── Sub-graph bundled routes ──
-      if (isExpMode && subNodesNow.length > 0) {
+      if (!focusMode && isExpMode && subNodesNow.length > 0) {
         const bundlePaths = subBundlePathsRef.current;
         const linesReady = now >= subLinesVisibleAfterRef.current;
         if (bundlePaths.length > 0 && linesReady) {
@@ -1454,6 +1596,7 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
             const s = subNodesNow[path.sourceIdx];
             const t = subNodesNow[path.targetIdx];
             if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
+            if (focusMode && (!highlightedSet.has(s.memId) || !highlightedSet.has(t.memId))) continue;
             const centerFade = 1 - path.coreIntrusion * 0.84;
             const width = (0.48 + path.intensity * 0.78) * invS * (1 - path.coreIntrusion * 0.6);
             const alpha = (0.012 + path.similarity * 0.045 + path.intensity * 0.028) * centerFade;
@@ -1492,6 +1635,7 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
             const s = typeof si === 'number' ? subNodesNow[si] : si;
             const t = typeof ti === 'number' ? subNodesNow[ti] : ti;
             if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
+            if (focusMode && (!highlightedSet.has(s.memId) || !highlightedSet.has(t.memId))) continue;
             ctx.beginPath();
             ctx.moveTo(s.x, s.y);
             ctx.lineTo(t.x, t.y);
@@ -1508,12 +1652,16 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
         const isExpanded = currentExpandedId === node.id;
         const isHovered = hoveredNode === node.id;
         const dimmed = isExpMode && !isExpanded;
-        const alpha = dimmed ? 0.12 : 1;
+        const relatedMemIds = highlightedByCluster.get(node.id) || [];
+        const isNarrativeRelated = relatedMemIds.length > 0;
+        const blink = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(now * 0.009 + node.id * 0.6));
+        const focusAlpha = isNarrativeRelated ? blink : 0.12;
+        const alpha = focusMode ? focusAlpha : (dimmed ? 0.12 : 1);
 
         // Glow
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.shadowBlur = (isHovered ? 24 : 14);
+        ctx.shadowBlur = isHovered ? 24 : 14;
         ctx.shadowColor = node.glow;
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
@@ -1532,6 +1680,33 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
+
+        if (focusMode && isNarrativeRelated) {
+          for (const memId of relatedMemIds) {
+            const focusPoint = focusPointByMemId.get(memId);
+            const mem = memById.get(memId);
+            if (!focusPoint) continue;
+            if (focusPoint.virtual) {
+              const blinkNode = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(now * 0.011 + hash(memId) * 0.0008));
+              const markerR = Math.max(1.8 * invS, node.radius * 0.045);
+              ctx.save();
+              ctx.globalAlpha = 0.5 + 0.35 * blinkNode;
+              ctx.fillStyle = mem?.emotion ? eStyle(mem.emotion).color : 'rgba(94, 234, 212, 0.95)';
+              ctx.shadowBlur = 6 * invS;
+              ctx.shadowColor = 'rgba(94, 234, 212, 0.72)';
+              ctx.beginPath();
+              ctx.arc(focusPoint.x, focusPoint.y, markerR, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }
+            pendingFocusNodeLabels.push({
+              x: focusPoint.x,
+              y: focusPoint.y,
+              text: mem?.key || mem?.object || memId,
+              color: 'rgba(94, 234, 212, 0.98)',
+            });
+          }
+        }
 
         pendingClusterLabels.push({ node, alpha, hovered: isHovered });
 
@@ -1561,16 +1736,22 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
           if (sn.x == null || sn.y == null) continue;
           const isHov = hoveredMem === sn.memId;
           const isSel = selectedMem === sn.memId;
+          const isNarrativeRelated = highlightedSet.has(sn.memId);
+          const blink = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(now * 0.011 + hash(sn.memId) * 0.0008));
+          const focusAlpha = isNarrativeRelated ? blink : 0.12;
           const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
-          const r = isHov ? baseR * 1.35 : isSel ? baseR * 1.28 : baseR;
+          const r = focusMode
+            ? baseR
+            : (isHov ? baseR * 1.35 : isSel ? baseR * 1.28 : isNarrativeRelated ? baseR * 1.2 : baseR);
 
           ctx.save();
-          ctx.shadowBlur = (isHov ? 14 : isSel ? 12 : 5 + (sn.importance || 0) * 3) * invS;
+          const shadow = isHov ? 14 : isSel ? 12 : isNarrativeRelated ? 10 : 5 + (sn.importance || 0) * 3;
+          ctx.shadowBlur = shadow * invS;
           ctx.shadowColor = sn.glow;
           ctx.beginPath();
           ctx.arc(sn.x, sn.y, r, 0, Math.PI * 2);
           ctx.fillStyle = sn.color;
-          ctx.globalAlpha = isSel ? 1 : 0.9;
+          ctx.globalAlpha = focusMode ? focusAlpha : (isSel || isNarrativeRelated ? 1 : 0.9);
           ctx.fill();
           ctx.restore();
           if (isHov) {
@@ -1642,6 +1823,7 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
         };
         const viewportNodes = subNodesNow
           .filter((sn) => inViewport(sn) && (sn.label || sn.memId) && sn.memId !== hoveredMem)
+          .filter((sn) => !focusMode || highlightedSet.has(sn.memId))
           .sort((a, b) => (b.importance || 0) - (a.importance || 0));
 
         const viewportCount = viewportNodes.length;
@@ -1680,7 +1862,7 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
       }
 
       // ── All labels at top-most layer ──
-      if (pendingClusterLabels.length > 0) {
+      if (!focusMode && pendingClusterLabels.length > 0) {
         for (const entry of pendingClusterLabels) {
           const { node, alpha, hovered } = entry;
           if (node.x == null || node.y == null) continue;
@@ -1703,7 +1885,7 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
         }
       }
 
-      if (pendingEdgeEndLabels.length > 0) {
+      if (!focusMode && pendingEdgeEndLabels.length > 0) {
         for (const label of pendingEdgeEndLabels) {
           ctx.save();
           const fs = 10.8 * invS;
@@ -1737,9 +1919,41 @@ function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
         }
       }
 
-      if (pendingMemLabels.length > 0) {
+      if (!focusMode && pendingMemLabels.length > 0) {
         for (const item of pendingMemLabels) {
           drawMemLabel(item.sn, item.anchorR, item.variant);
+        }
+      }
+
+      if (focusMode && pendingFocusNodeLabels.length > 0) {
+        const drawnKeys = new Set<string>();
+        for (const item of pendingFocusNodeLabels) {
+          const key = `${Math.round(item.x * 2)}|${Math.round(item.y * 2)}`;
+          if (drawnKeys.has(key)) continue;
+          drawnKeys.add(key);
+          const text = truncateLabel(item.text, 24);
+          const fs = 9.8 * invS;
+          const px = 6.2 * invS;
+          const py = 3.2 * invS;
+          ctx.save();
+          ctx.font = `600 ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const tw = ctx.measureText(text).width;
+          const bw = tw + px * 2;
+          const bh = fs + py * 2;
+          const cx = item.x;
+          const cy = item.y - 10 * invS - bh * 0.5;
+          ctx.fillStyle = 'rgba(7, 17, 29, 0.92)';
+          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(94, 234, 212, 0.48)';
+          ctx.lineWidth = Math.max(0.8 * invS, 0.75 / cam.scale);
+          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
+          ctx.stroke();
+          ctx.fillStyle = item.color;
+          ctx.fillText(text, cx, cy + 0.2 * invS);
+          ctx.restore();
         }
       }
 
