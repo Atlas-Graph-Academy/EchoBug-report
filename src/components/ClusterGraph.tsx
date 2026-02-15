@@ -627,10 +627,10 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
     const sim = forceSimulation<ClusterNode>(simNodes)
       .force('link', forceLink<ClusterNode, ClusterLink>(simLinks as ClusterLink[])
-        .id((d) => d.id).distance(140).strength((l) => Math.min(0.3, (l as ClusterLink).weight * 0.015)))
-      .force('charge', forceManyBody<ClusterNode>().strength(-400))
+        .id((d) => d.id).distance(160).strength((l) => Math.min(0.3, (l as ClusterLink).weight * 0.015)))
+      .force('charge', forceManyBody<ClusterNode>().strength(-520))
       .force('center', forceCenter(w / 2, h / 2))
-      .force('collide', forceCollide<ClusterNode>().radius((d) => d.radius + 16))
+      .force('collide', forceCollide<ClusterNode>().radius((d) => d.radius + 24))
       .alphaDecay(0.02);
 
     simRef.current = sim;
@@ -1608,9 +1608,10 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           const { node, alpha, hovered } = entry;
           if (node.x == null || node.y == null) continue;
           const nodeScreenR = node.radius * cam.scale;
-          const labelScale = clamp(nodeScreenR / 38, 0.9, 1.7);
-          const fontSize = (hovered ? 12.8 : 11.8) * labelScale * invS;
-          const yOff = (node.radius + 3.2 * labelScale * invS);
+          const labelScale = clamp(nodeScreenR / 44, 0.84, 1.32);
+          const fontSize = (hovered ? 12.1 : 11.2) * labelScale * invS;
+          // Keep title close to numeric center instead of floating outside.
+          const yOff = Math.min(node.radius * 0.26, 14 * invS);
           ctx.save();
           ctx.globalAlpha = alpha;
           ctx.font = `${hovered ? 640 : 600} ${fontSize}px "Avenir Next", "Segoe UI", sans-serif`;
