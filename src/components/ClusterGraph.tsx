@@ -175,10 +175,12 @@ interface ExpandInfo {
 interface Props {
   memories: MemoryNode[];
   embeddingsData: EmbeddingsData;
-  onMemoryClick: (memoryId: string) => void;
+  onMemoryClick: (memoryId: string, anchor?: { clientX: number; clientY: number }) => void;
   onClearFocus?: () => void;
   highlightedMemoryIds?: string[];
   sequenceMemoryIds?: string[];
+  focusMemoryId?: string | null;
+  onFocusAnchorChange?: (anchor?: { clientX: number; clientY: number }) => void;
 }
 
 function sameIdList(a: string[] | undefined, b: string[] | undefined): boolean {
@@ -195,7 +197,9 @@ function sameIdList(a: string[] | undefined, b: string[] | undefined): boolean {
 function arePropsEqual(prev: Props, next: Props): boolean {
   if (prev.onMemoryClick !== next.onMemoryClick) return false;
   if (prev.onClearFocus !== next.onClearFocus) return false;
+  if (prev.onFocusAnchorChange !== next.onFocusAnchorChange) return false;
   if (prev.embeddingsData !== next.embeddingsData) return false;
+  if (prev.focusMemoryId !== next.focusMemoryId) return false;
   if (!sameIdList(prev.highlightedMemoryIds, next.highlightedMemoryIds)) return false;
   if (!sameIdList(prev.sequenceMemoryIds, next.sequenceMemoryIds)) return false;
   if (prev.memories === next.memories) return true;
@@ -344,6 +348,8 @@ function ClusterGraph({
   onClearFocus,
   highlightedMemoryIds = [],
   sequenceMemoryIds = [],
+  focusMemoryId = null,
+  onFocusAnchorChange,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -361,6 +367,14 @@ function ClusterGraph({
   const subLinesVisibleAfterRef = useRef<number>(0);
   const highlightedMemoryIdsRef = useRef<string[]>([]);
   const sequenceMemoryIdsRef = useRef<string[]>([]);
+  const focusMemoryIdRef = useRef<string | null>(focusMemoryId);
+  const onFocusAnchorChangeRef = useRef<Props['onFocusAnchorChange']>(onFocusAnchorChange);
+  const lastFocusAnchorRef = useRef<{ visible: boolean; x: number; y: number; id: string | null }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    id: null,
+  });
   const hoveredNodeRef = useRef<number | null>(null);
   const hoveredMemRef = useRef<string | null>(null);
   const canvasMetricsRef = useRef<{ vw: number; vh: number; dpr: number }>({ vw: 0, vh: 0, dpr: 0 });
@@ -397,6 +411,14 @@ function ClusterGraph({
   useEffect(() => {
     sequenceMemoryIdsRef.current = sequenceMemoryIds;
   }, [sequenceMemoryIds]);
+
+  useEffect(() => {
+    focusMemoryIdRef.current = focusMemoryId;
+  }, [focusMemoryId]);
+
+  useEffect(() => {
+    onFocusAnchorChangeRef.current = onFocusAnchorChange;
+  }, [onFocusAnchorChange]);
 
   useEffect(() => {
     const canvas = glCanvasRef.current;
@@ -2037,6 +2059,43 @@ function ClusterGraph({
         }
       }
 
+      const focusAnchorCallback = onFocusAnchorChangeRef.current;
+      const trackedFocusMemId = focusMemoryIdRef.current;
+      if (focusAnchorCallback && trackedFocusMemId) {
+        let worldFocus: { x: number; y: number } | null = null;
+        const subNode = subNodeByMemId.get(trackedFocusMemId);
+        if (subNode && subNode.x != null && subNode.y != null) {
+          worldFocus = { x: subNode.x, y: subNode.y };
+        } else {
+          for (const cluster of clusterNodesNow) {
+            if (!cluster.memberIds.includes(trackedFocusMemId)) continue;
+            const synthetic = narrativeFocusPoint(cluster, trackedFocusMemId);
+            if (synthetic) worldFocus = synthetic;
+            break;
+          }
+        }
+
+        if (worldFocus) {
+          const sx = worldFocus.x * cam.scale + cam.x;
+          const sy = worldFocus.y * cam.scale + cam.y;
+          const rect = container.getBoundingClientRect();
+          const clientX = rect.left + sx;
+          const clientY = rect.top + sy;
+          const last = lastFocusAnchorRef.current;
+          const moved = Math.abs(clientX - last.x) > 1 || Math.abs(clientY - last.y) > 1;
+          if (!last.visible || moved || last.id !== trackedFocusMemId) {
+            focusAnchorCallback({ clientX, clientY });
+            lastFocusAnchorRef.current = { visible: true, x: clientX, y: clientY, id: trackedFocusMemId };
+          }
+        } else if (lastFocusAnchorRef.current.visible) {
+          focusAnchorCallback(undefined);
+          lastFocusAnchorRef.current = { visible: false, x: 0, y: 0, id: trackedFocusMemId };
+        }
+      } else if (lastFocusAnchorRef.current.visible) {
+        onFocusAnchorChangeRef.current?.(undefined);
+        lastFocusAnchorRef.current = { visible: false, x: 0, y: 0, id: null };
+      }
+
       ctx.restore(); // pop camera
 
       rafRef.current = requestAnimationFrame(render);
@@ -2285,7 +2344,7 @@ function ClusterGraph({
             scale: camNow.scale,
           }, 260);
         }
-        onMemoryClick(memNode.memId);
+        onMemoryClick(memNode.memId, { clientX: e.clientX, clientY: e.clientY });
       }
     }
 

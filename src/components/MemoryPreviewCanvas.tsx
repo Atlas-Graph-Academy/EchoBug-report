@@ -244,6 +244,10 @@ function hashEmotion(value: string): number {
   return hash;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 function getEmotionStyle(emotion: string) {
   const key = normalizeValue(emotion).toLowerCase();
   const style = EMOTION_PALETTE[hashEmotion(key) % EMOTION_PALETTE.length];
@@ -252,6 +256,8 @@ function getEmotionStyle(emotion: string) {
 
 export default function MemoryPreviewCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const constellationMainRef = useRef<HTMLDivElement>(null);
+  const metaMenuRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -267,6 +273,9 @@ export default function MemoryPreviewCanvas() {
   const [constellationFocusActive, setConstellationFocusActive] = useState(true);
   const [narrativeMemoryId, setNarrativeMemoryId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'stream' | 'constellation'>('constellation');
+  const [showDetails, setShowDetails] = useState(false);
+  const [showMetaMenu, setShowMetaMenu] = useState(false);
+  const [constellationDetailAnchor, setConstellationDetailAnchor] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -310,6 +319,20 @@ export default function MemoryPreviewCanvas() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedRecord]);
+
+  useEffect(() => {
+    setShowDetails(false);
+    setShowMetaMenu(false);
+  }, [selectedRecord?.keyText, detailSource]);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!metaMenuRef.current?.contains(target)) setShowMetaMenu(false);
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, []);
 
   const sortedRecords = useMemo(() => {
     return [...records].sort((a, b) => getTimestamp(b) - getTimestamp(a));
@@ -625,9 +648,11 @@ export default function MemoryPreviewCanvas() {
 
     setConstellationFocusActive(true);
     setNarrativeMemoryId(nodeId);
+    setShowDetails(false);
+    setShowMetaMenu(false);
   }, [sortedRecords]);
 
-  const handleConstellationMemoryClick = useCallback((memoryId: string) => {
+  const handleConstellationMemoryClick = useCallback((memoryId: string, anchor?: { clientX: number; clientY: number }) => {
     const record = sortedRecords.find(r => r.id === memoryId);
     if (!record) return;
 
@@ -654,6 +679,15 @@ export default function MemoryPreviewCanvas() {
     setConstellationFocusActive(true);
     setDetailSource('constellation');
     setNarrativeMemoryId(memoryId);
+    setShowDetails(false);
+    setShowMetaMenu(false);
+
+    if (anchor && constellationMainRef.current) {
+      const rect = constellationMainRef.current.getBoundingClientRect();
+      const localX = anchor.clientX - rect.left;
+      const localY = anchor.clientY - rect.top;
+      setConstellationDetailAnchor({ x: localX, y: localY });
+    }
   }, [sortedRecords]);
 
   const closeDetail = useCallback(() => {
@@ -661,6 +695,8 @@ export default function MemoryPreviewCanvas() {
     setNarrativeMemoryId(null);
     setDetailSource(null);
     setConstellationFocusActive(false);
+    setShowDetails(false);
+    setShowMetaMenu(false);
   }, []);
 
   const clearConstellationFocus = useCallback(() => {
@@ -671,16 +707,63 @@ export default function MemoryPreviewCanvas() {
     viewMode === 'constellation' && selectedRecord && detailSource === 'constellation';
   const showStreamDetail = selectedRecord && detailSource === 'stream';
 
+  const constellationDetailStyle = useMemo(() => {
+    if (!showConstellationDetail || !constellationMainRef.current) return undefined;
+
+    const cardW = 360;
+    const topSafe = 58;
+    const sideSafe = 12;
+    const main = constellationMainRef.current;
+    const baseX = constellationDetailAnchor ? constellationDetailAnchor.x + 14 : main.clientWidth - cardW - 24;
+    const baseY = constellationDetailAnchor ? constellationDetailAnchor.y + 10 : topSafe + 14;
+
+    const left = clamp(baseX, sideSafe, Math.max(sideSafe, main.clientWidth - cardW - sideSafe));
+    const top = clamp(baseY, topSafe, Math.max(topSafe, main.clientHeight - 220));
+    return { left: `${left}px`, top: `${top}px` };
+  }, [showConstellationDetail, constellationDetailAnchor]);
+
+  const handleConstellationFocusAnchorChange = useCallback((anchor?: { clientX: number; clientY: number }) => {
+    if (!showConstellationDetail || !constellationMainRef.current) return;
+    if (!anchor) return;
+
+    const rect = constellationMainRef.current.getBoundingClientRect();
+    const localX = Math.round(anchor.clientX - rect.left);
+    const localY = Math.round(anchor.clientY - rect.top);
+
+    setConstellationDetailAnchor((prev) => {
+      if (prev && Math.abs(prev.x - localX) < 1 && Math.abs(prev.y - localY) < 1) return prev;
+      return { x: localX, y: localY };
+    });
+  }, [showConstellationDetail]);
+
   const detailCard = selectedRecord && (
-    <article className={`memory-detail-card${showConstellationDetail ? ' memory-detail-card-sidebar' : ''}`}>
+    <article
+      className={`memory-detail-card memory-detail-card-compact${showConstellationDetail ? ' memory-detail-card-floating' : ''}`}
+      style={showConstellationDetail ? constellationDetailStyle : undefined}
+    >
       <header className="memory-detail-header">
         <div>
           <h3>{selectedRecord.keyText}</h3>
-          <p>Created: {selectedRecord.createdTimeText}</p>
+          <p>{selectedRecord.createdTimeText}</p>
         </div>
-        <button className="memory-detail-close" onClick={closeDetail}>
-          Close
-        </button>
+        <div className="memory-detail-actions">
+          <div className="memory-detail-menu" ref={metaMenuRef}>
+            <button className="memory-detail-more" onClick={() => setShowMetaMenu((v) => !v)} aria-label="Open metadata menu">
+              ...
+            </button>
+            {showMetaMenu && (
+              <div className="memory-detail-menu-popover">
+                <div><strong>Category:</strong> {selectedRecord.category}</div>
+                <div><strong>Object:</strong> {selectedRecord.object}</div>
+                <div><strong>Emotion:</strong> {selectedRecord.emotion}</div>
+                <div><strong>Visibility:</strong> {selectedRecord.visibility}</div>
+              </div>
+            )}
+          </div>
+          <button className="memory-detail-close" onClick={closeDetail}>
+            Close
+          </button>
+        </div>
       </header>
 
       {!showConstellationDetail && narrativeContext && (
@@ -690,35 +773,18 @@ export default function MemoryPreviewCanvas() {
           onNodeClick={handleNarrativeNodeClick}
         />
       )}
-
-      <dl className="memory-detail-meta">
-        <div>
-          <dt>Category</dt>
-          <dd>{selectedRecord.category}</dd>
-        </div>
-        <div>
-          <dt>Object</dt>
-          <dd>{selectedRecord.object}</dd>
-        </div>
-        <div>
-          <dt>Emotion</dt>
-          <dd>{selectedRecord.emotion}</dd>
-        </div>
-        <div>
-          <dt>Visibility</dt>
-          <dd>{selectedRecord.visibility}</dd>
-        </div>
-      </dl>
-
       <section className="memory-detail-section">
-        <h4>Description</h4>
         <p>{selectedRecord.description}</p>
       </section>
 
-      <section className="memory-detail-section">
-        <h4>Details</h4>
-        <p>{selectedRecord.details}</p>
-      </section>
+      <button className="memory-detail-toggle" onClick={() => setShowDetails((v) => !v)}>
+        {showDetails ? 'Hide Details' : 'Details'}
+      </button>
+      {showDetails && (
+        <section className="memory-detail-section memory-detail-section-details">
+          <p>{selectedRecord.details}</p>
+        </section>
+      )}
     </article>
   );
 
@@ -732,8 +798,8 @@ export default function MemoryPreviewCanvas() {
 
   return (
     <>
-      <div className={`memory-canvas-wrapper${showConstellationDetail ? ' memory-canvas-wrapper-with-panel' : ''}`}>
-        <div className="memory-canvas-main">
+      <div className="memory-canvas-wrapper">
+        <div className="memory-canvas-main" ref={constellationMainRef}>
           <div className="memory-canvas-meta">
             <h2>{viewMode === 'stream' ? 'Memory Stream' : 'Constellation'}</h2>
             <div className="memory-view-toggle">
@@ -790,6 +856,8 @@ export default function MemoryPreviewCanvas() {
                 embeddingsData={embeddingsData}
                 onMemoryClick={handleConstellationMemoryClick}
                 onClearFocus={clearConstellationFocus}
+                focusMemoryId={showConstellationDetail ? narrativeMemoryId : null}
+                onFocusAnchorChange={handleConstellationFocusAnchorChange}
                 highlightedMemoryIds={
                   showConstellationDetail && constellationFocusActive ? (narrativeContext?.listedIds ?? []) : []
                 }
@@ -809,12 +877,8 @@ export default function MemoryPreviewCanvas() {
               />
             </div>
           )}
+          {showConstellationDetail && detailCard}
         </div>
-        {showConstellationDetail && (
-          <aside className="memory-detail-sidebar">
-            {detailCard}
-          </aside>
-        )}
       </div>
 
       {showStreamDetail && (

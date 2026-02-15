@@ -879,6 +879,18 @@ main {
   padding: 18px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
 }
+.memory-detail-card-compact {
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(66dvh, 520px);
+  border-radius: 14px;
+  padding: 12px;
+  overflow: visible;
+}
+.memory-detail-card-floating {
+  position: absolute;
+  z-index: 42;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
 .memory-detail-sidebar {
   width: min(520px, 40vw);
   min-width: 380px;
@@ -893,29 +905,68 @@ main {
 .memory-detail-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
-  padding-bottom: 14px;
+  padding-bottom: 10px;
   border-bottom: 1px solid rgba(201, 225, 255, 0.12);
 }
 .memory-detail-header h3 {
-  font-size: 24px;
+  font-size: 17px;
   line-height: 1.2;
   color: #eff7ff;
 }
 .memory-detail-header p {
-  margin-top: 6px;
-  font-size: 13px;
+  margin-top: 4px;
+  font-size: 12px;
   color: #9fbcda;
+}
+.memory-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.memory-detail-menu {
+  position: relative;
+}
+.memory-detail-more {
+  border: 1px solid rgba(201, 225, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: #d9ebff;
+  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.memory-detail-menu-popover {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  min-width: 220px;
+  background: #0b1324;
+  border: 1px solid rgba(201, 225, 255, 0.18);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 45;
+}
+.memory-detail-menu-popover div {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #d9ebff;
 }
 .memory-detail-close {
   border: 1px solid rgba(201, 225, 255, 0.22);
   background: rgba(255, 255, 255, 0.06);
   color: #d9ebff;
   border-radius: 10px;
-  height: 36px;
-  padding: 0 12px;
-  font-size: 13px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -946,11 +997,11 @@ main {
   color: #ecf5ff;
 }
 .memory-detail-section {
-  margin-top: 14px;
+  margin-top: 10px;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(201, 225, 255, 0.1);
   border-radius: 12px;
-  padding: 12px;
+  padding: 10px;
 }
 .memory-detail-section h4 {
   font-size: 13px;
@@ -960,10 +1011,29 @@ main {
   margin-bottom: 8px;
 }
 .memory-detail-section p {
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: 13px;
+  line-height: 1.55;
   color: #f0f7ff;
   white-space: pre-wrap;
+}
+.memory-detail-toggle {
+  margin-top: 10px;
+  border: 1px solid rgba(201, 225, 255, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d9ebff;
+  border-radius: 10px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.memory-detail-toggle:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+.memory-detail-section-details {
+  max-height: 240px;
+  overflow: auto;
 }
 @media (max-width: 720px) {
   .memory-canvas-wrapper-with-panel {
@@ -990,6 +1060,9 @@ main {
   }
   .memory-detail-card {
     padding: 14px;
+  }
+  .memory-detail-card-compact {
+    width: min(340px, calc(100vw - 24px));
   }
   .memory-detail-header h3 {
     font-size: 20px;
