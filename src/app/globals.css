@@ -884,6 +884,7 @@ main {
   max-height: min(66dvh, 520px);
   border-radius: 14px;
   padding: 12px;
+  padding-bottom: 58px;
   overflow: visible;
 }
 .memory-detail-card-floating {
@@ -920,13 +921,30 @@ main {
   font-size: 12px;
   color: #9fbcda;
 }
-.memory-detail-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.memory-detail-pointer {
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  background: #0f1a31;
+  border-left: 1px solid rgba(201, 225, 255, 0.24);
+  border-top: 1px solid rgba(201, 225, 255, 0.24);
+  transform: rotate(45deg);
+  box-shadow: -6px -6px 16px rgba(0, 0, 0, 0.25);
+}
+.memory-detail-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
 }
 .memory-detail-menu {
   position: relative;
+}
+.memory-detail-menu-corner {
+  position: absolute;
+  right: -2px;
+  bottom: 38px;
 }
 .memory-detail-more {
   border: 1px solid rgba(201, 225, 255, 0.22);
@@ -941,7 +959,7 @@ main {
 }
 .memory-detail-menu-popover {
   position: absolute;
-  top: 40px;
+  bottom: 40px;
   right: 0;
   min-width: 220px;
   background: #0b1324;
@@ -972,6 +990,14 @@ main {
 }
 .memory-detail-close:hover {
   background: rgba(255, 255, 255, 0.11);
+}
+.memory-detail-close-danger {
+  border-color: rgba(248, 113, 113, 0.6);
+  background: rgba(127, 29, 29, 0.55);
+  color: #fee2e2;
+}
+.memory-detail-close-danger:hover {
+  background: rgba(153, 27, 27, 0.78);
 }
 .memory-detail-meta {
   margin-top: 14px;

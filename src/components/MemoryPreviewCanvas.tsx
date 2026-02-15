@@ -741,28 +741,11 @@ export default function MemoryPreviewCanvas() {
       className={`memory-detail-card memory-detail-card-compact${showConstellationDetail ? ' memory-detail-card-floating' : ''}`}
       style={showConstellationDetail ? constellationDetailStyle : undefined}
     >
+      {showConstellationDetail && <div className="memory-detail-pointer" aria-hidden />}
       <header className="memory-detail-header">
         <div>
           <h3>{selectedRecord.keyText}</h3>
           <p>{selectedRecord.createdTimeText}</p>
-        </div>
-        <div className="memory-detail-actions">
-          <div className="memory-detail-menu" ref={metaMenuRef}>
-            <button className="memory-detail-more" onClick={() => setShowMetaMenu((v) => !v)} aria-label="Open metadata menu">
-              ...
-            </button>
-            {showMetaMenu && (
-              <div className="memory-detail-menu-popover">
-                <div><strong>Category:</strong> {selectedRecord.category}</div>
-                <div><strong>Object:</strong> {selectedRecord.object}</div>
-                <div><strong>Emotion:</strong> {selectedRecord.emotion}</div>
-                <div><strong>Visibility:</strong> {selectedRecord.visibility}</div>
-              </div>
-            )}
-          </div>
-          <button className="memory-detail-close" onClick={closeDetail}>
-            Close
-          </button>
         </div>
       </header>
 
@@ -785,6 +768,25 @@ export default function MemoryPreviewCanvas() {
           <p>{selectedRecord.details}</p>
         </section>
       )}
+
+      <div className="memory-detail-controls">
+        <button className="memory-detail-close memory-detail-close-danger" onClick={closeDetail}>
+          Close
+        </button>
+        <div className="memory-detail-menu memory-detail-menu-corner" ref={metaMenuRef}>
+          <button className="memory-detail-more" onClick={() => setShowMetaMenu((v) => !v)} aria-label="Open metadata menu">
+            ...
+          </button>
+          {showMetaMenu && (
+            <div className="memory-detail-menu-popover">
+              <div><strong>Category:</strong> {selectedRecord.category}</div>
+              <div><strong>Object:</strong> {selectedRecord.object}</div>
+              <div><strong>Emotion:</strong> {selectedRecord.emotion}</div>
+              <div><strong>Visibility:</strong> {selectedRecord.visibility}</div>
+            </div>
+          )}
+        </div>
+      </div>
     </article>
   );
 
