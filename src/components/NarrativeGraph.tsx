@@ -64,8 +64,8 @@ function eStyle(emotion: string) {
   return PALETTE[hash((emotion || '').trim().toLowerCase() || 'x') % PALETTE.length];
 }
 
-function trunc(text: string, max: number): string {
-  return text.length <= max ? text : text.slice(0, max) + '\u2026';
+function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
 }
 
 function toTs(dateStr: string): number {
@@ -130,8 +130,8 @@ function buildFlowData(
   const padL = 60;
   const padR = 50;
   const spineY = height * 0.44;
-  const branchUpBaseY = height * 0.13;
-  const branchDownBaseY = height * 0.78;
+  const branchUpBaseY = Math.max(56, height * 0.23);
+  const branchDownBaseY = Math.min(height - 56, height * 0.74);
   const spineSpacing = spineIds.length > 1
     ? (width - padL - padR) / (spineIds.length - 1)
     : 0;
@@ -156,7 +156,7 @@ function buildFlowData(
 
     nodes.push({
       id,
-      label: trunc(mem.object || mem.text, 14),
+      label: mem.object || mem.text,
       dateLabel: fmtDate(mem.createdAt) + ' ' + fmtTime(mem.createdAt),
       x, y,
       radius: isCur ? currentR : baseR,
@@ -181,11 +181,16 @@ function buildFlowData(
   }
 
   // ── 2. Object chain (upward spokes from current, NO sibling links) ──
-  const objNodes = chains.objectChain.filter(n => !placed.has(n.id)).slice(0, 4);
+  const objNodes = chains.objectChain.filter(n => !placed.has(n.id));
   if (objNodes.length > 0) {
-    const spreadX = Math.min(spineSpacing * 0.6, 70);
+    const laneMinX = 80;
+    const laneMaxX = width - 80;
+    const maxLaneW = Math.max(0, laneMaxX - laneMinX);
+    const spreadX = objNodes.length > 1
+      ? Math.min(Math.min(spineSpacing * 0.6, 70), maxLaneW / (objNodes.length - 1))
+      : 0;
     const totalW = (objNodes.length - 1) * spreadX;
-    const startX = currentSpineX - totalW / 2;
+    const startX = clamp(currentSpineX - totalW / 2, laneMinX, laneMaxX - totalW);
 
     objNodes.forEach((n, i) => {
       const mem = srcMap.get(n.id) || n;
@@ -196,7 +201,7 @@ function buildFlowData(
 
       nodes.push({
         id: n.id,
-        label: trunc(mem.object || mem.text, 12),
+        label: mem.object || mem.text,
         dateLabel: fmtDate(mem.createdAt),
         x, y,
         radius: baseR - 1,
@@ -220,11 +225,16 @@ function buildFlowData(
   }
 
   // ── 3. Category chain (downward spokes from current, NO sibling links) ──
-  const catNodes = chains.categoryChain.filter(n => !placed.has(n.id)).slice(0, 4);
+  const catNodes = chains.categoryChain.filter(n => !placed.has(n.id));
   if (catNodes.length > 0) {
-    const spreadX = Math.min(spineSpacing * 0.6, 70);
+    const laneMinX = 80;
+    const laneMaxX = width - 80;
+    const maxLaneW = Math.max(0, laneMaxX - laneMinX);
+    const spreadX = catNodes.length > 1
+      ? Math.min(Math.min(spineSpacing * 0.6, 70), maxLaneW / (catNodes.length - 1))
+      : 0;
     const totalW = (catNodes.length - 1) * spreadX;
-    const startX = currentSpineX - totalW / 2;
+    const startX = clamp(currentSpineX - totalW / 2, laneMinX, laneMaxX - totalW);
 
     catNodes.forEach((n, i) => {
       const mem = srcMap.get(n.id) || n;
@@ -234,7 +244,7 @@ function buildFlowData(
 
       nodes.push({
         id: n.id,
-        label: trunc(mem.object || mem.text, 12),
+        label: mem.object || mem.text,
         dateLabel: fmtDate(mem.createdAt),
         x, y,
         radius: baseR - 1,
@@ -262,7 +272,7 @@ function buildFlowData(
     const style = eStyle(mem.emotion);
     nodes.push({
       id: chains.surprise.id,
-      label: trunc(mem.object || mem.text, 12),
+      label: mem.object || mem.text,
       dateLabel: '?',
       x: Math.min(currentSpineX + spineSpacing * 1.5, width - padR - 20),
       y: branchUpBaseY - 4,
@@ -415,7 +425,7 @@ function drawFlow(
     const isSpineEdge = edge.style === 'arrow';
 
     ctx.save();
-    ctx.globalAlpha = hl ? 1 : isSpineEdge ? 0.8 : 0.35;
+    ctx.globalAlpha = hl ? 1 : isSpineEdge ? 0.88 : 0.72;
     ctx.strokeStyle = edge.color;
     ctx.lineWidth = hl ? edge.width + 0.8 : edge.width;
     ctx.fillStyle = edge.color;
@@ -450,8 +460,7 @@ function drawFlow(
 
     // Outer glow
     ctx.save();
-    if (isSecondary && !isHovered) ctx.globalAlpha = 0.4;
-    ctx.shadowBlur = isHovered ? 22 : isSecondary ? 6 : 14;
+    ctx.shadowBlur = isHovered ? 22 : isSecondary ? 10 : 14;
     ctx.shadowColor = node.glow;
 
     // Circle fill
@@ -460,21 +469,21 @@ function drawFlow(
     if (node.isCurrent) {
       ctx.fillStyle = node.color;
     } else if (isSecondary) {
-      ctx.fillStyle = `${node.color}15`;
+      ctx.fillStyle = `${node.color}32`;
     } else {
       ctx.fillStyle = `${node.color}25`;
     }
     ctx.fill();
 
     // Circle border
-    ctx.strokeStyle = isSecondary ? `${node.color}60` : node.color;
+    ctx.strokeStyle = isSecondary ? `${node.color}d0` : node.color;
     ctx.lineWidth = node.isCurrent ? 3 : isSecondary ? 1 : 1.5;
     ctx.stroke();
 
     if (!node.isCurrent) {
       ctx.beginPath();
       ctx.arc(node.x, node.y, r * 0.4, 0, Math.PI * 2);
-      ctx.fillStyle = isSecondary ? `${node.color}80` : node.color;
+      ctx.fillStyle = isSecondary ? `${node.color}f0` : node.color;
       ctx.fill();
     }
     ctx.restore();
@@ -560,14 +569,14 @@ function drawFlow(
       const textW = ctx.measureText(node.label).width;
       const badgeW = textW + 10;
       const badgeH = 16;
-      const badgeX = node.x - badgeW / 2;
+      const badgeX = clamp(node.x - badgeW / 2, 4, width - badgeW - 4);
       const badgeY = isUp ? labelY - badgeH : labelY;
 
       // Badge background
       ctx.save();
-      ctx.globalAlpha = isHovered ? 0.8 : 0.45;
+      ctx.globalAlpha = isHovered ? 0.95 : 0.82;
       ctx.fillStyle = '#131929';
-      ctx.strokeStyle = isHovered ? 'rgba(160,170,180,0.3)' : 'rgba(120,130,140,0.15)';
+      ctx.strokeStyle = isHovered ? 'rgba(194,212,230,0.72)' : 'rgba(178,197,216,0.5)';
       ctx.lineWidth = 0.6;
 
       const br = 4;
@@ -590,17 +599,17 @@ function drawFlow(
       ctx.font = `600 9px "Avenir Next", "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = isHovered ? 'rgba(200,210,220,0.8)' : 'rgba(160,170,180,0.4)';
-      ctx.fillText(node.label, node.x, badgeY + badgeH / 2);
+      ctx.fillStyle = isHovered ? 'rgba(230,240,248,0.96)' : 'rgba(211,225,238,0.88)';
+      ctx.fillText(node.label, badgeX + badgeW / 2, badgeY + badgeH / 2);
 
       // Date tiny
       if (node.dateLabel) {
         ctx.font = '400 7px "Avenir Next", sans-serif';
-        ctx.fillStyle = 'rgba(160,188,218,0.25)';
+        ctx.fillStyle = 'rgba(173,199,224,0.65)';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         const dY = isUp ? badgeY - 10 : badgeY + badgeH + 2;
-        ctx.fillText(node.dateLabel, node.x, dY);
+        ctx.fillText(node.dateLabel, badgeX + badgeW / 2, dY);
       }
 
       // Similarity inside node
