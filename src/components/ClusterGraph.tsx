@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   forceSimulation,
   forceLink,
@@ -159,6 +159,8 @@ interface SubBundlePath {
   intensity: number;
   color: [number, number, number];
   coreIntrusion: number;
+  sourceIdx: number;
+  targetIdx: number;
 }
 
 interface ExpandInfo {
@@ -174,6 +176,19 @@ interface Props {
   memories: MemoryNode[];
   embeddingsData: EmbeddingsData;
   onMemoryClick: (memoryId: string) => void;
+}
+
+function arePropsEqual(prev: Props, next: Props): boolean {
+  if (prev.onMemoryClick !== next.onMemoryClick) return false;
+  if (prev.embeddingsData !== next.embeddingsData) return false;
+  if (prev.memories === next.memories) return true;
+  if (prev.memories.length !== next.memories.length) return false;
+  if (prev.memories.length === 0) return true;
+  const p0 = prev.memories[0]?.id;
+  const n0 = next.memories[0]?.id;
+  const pLast = prev.memories[prev.memories.length - 1]?.id;
+  const nLast = next.memories[next.memories.length - 1]?.id;
+  return p0 === n0 && pLast === nLast;
 }
 
 interface WebGLScene {
@@ -294,7 +309,7 @@ function drawSmoothBundle(ctx: CanvasRenderingContext2D, points: BundlePathPoint
   ctx.lineTo(last.x, last.y);
 }
 
-export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
+function ClusterGraph({ memories, embeddingsData, onMemoryClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -307,6 +322,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
   const subLinksRef = useRef<MemSubLink[]>([]);
   const subRenderLinksRef = useRef<MemSubLink[]>([]);
   const subBundlePathsRef = useRef<SubBundlePath[]>([]);
+  const selectedMemRef = useRef<string | null>(null);
+  const subLinesVisibleAfterRef = useRef<number>(0);
   const hoveredNodeRef = useRef<number | null>(null);
   const hoveredMemRef = useRef<string | null>(null);
   const canvasMetricsRef = useRef<{ vw: number; vh: number; dpr: number }>({ vw: 0, vh: 0, dpr: 0 });
@@ -655,6 +672,17 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
               if (n.fx != null) n.fx += dx;
               if (n.fy != null) n.fy += dy;
             }
+            // Keep bundled routes rigidly attached while parent cluster drifts.
+            for (const path of subBundlePathsRef.current) {
+              for (const p of path.points) {
+                p.x += dx;
+                p.y += dy;
+              }
+            }
+            // During visible motion, defer line display slightly to avoid jittered mismatch.
+            if (Math.hypot(dx, dy) > 0.2) {
+              subLinesVisibleAfterRef.current = Math.max(subLinesVisibleAfterRef.current, performance.now() + 140);
+            }
 
             if (subSim) {
               const centerForce = subSim.force('center') as { x?: (v: number) => unknown; y?: (v: number) => unknown } | null;
@@ -703,6 +731,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
 
     setExpandedCluster(clusterId);
     subBundlePathsRef.current = [];
+    subLinesVisibleAfterRef.current = performance.now() + 380;
     const buildToken = ++expandBuildTokenRef.current;
 
     const memberCount = cluster.memberIds.length;
@@ -957,6 +986,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     };
 
     const bundlePaths: SubBundlePath[] = [];
+    const clonePt = (p: BundlePathPoint): BundlePathPoint => ({ x: p.x, y: p.y });
     for (const l of subRenderLinksRef.current) {
       const sIdx = Number(l.source);
       const tIdx = Number(l.target);
@@ -975,7 +1005,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const points: BundlePathPoint[] = [{ x: s.x, y: s.y }, sb];
 
       if (hs === ht) {
-        points.push(rs.trunkOuter, tb, { x: t.x, y: t.y });
+        points.push(clonePt(rs.trunkOuter), tb, { x: t.x, y: t.y });
       } else {
         const jcDir = unitVec(rs.ux + rt.ux, rs.uy + rt.uy);
         const lo = Math.min(hs, ht);
@@ -998,7 +1028,15 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           x: cx + jcDir.x * boundaryR * 0.2 + jPerp.x * jLane,
           y: cy + jcDir.y * boundaryR * 0.2 + jPerp.y * jLane,
         };
-        points.push(rs.trunkOuter, sourceGate, junction, targetGate, rt.trunkOuter, tb, { x: t.x, y: t.y });
+        points.push(
+          clonePt(rs.trunkOuter),
+          sourceGate,
+          junction,
+          targetGate,
+          clonePt(rt.trunkOuter),
+          tb,
+          { x: t.x, y: t.y }
+        );
       }
       const avgImp = ((s.importance || 0.3) + (t.importance || 0.3)) * 0.5;
       const [sr, sg, sbc] = parseHexColor(s.color);
@@ -1022,6 +1060,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           0,
           1
         ),
+        sourceIdx: sIdx,
+        targetIdx: tIdx,
       });
     }
     subBundlePathsRef.current = bundlePaths;
@@ -1043,6 +1083,8 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     subLinksRef.current = [];
     subRenderLinksRef.current = [];
     subBundlePathsRef.current = [];
+    selectedMemRef.current = null;
+    subLinesVisibleAfterRef.current = 0;
     markWebGLDirty();
     hoveredMemRef.current = null;
     expandInfoRef.current = null;
@@ -1182,6 +1224,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       const subNodesNow = subNodesRef.current;
       const hoveredNode = hoveredNodeRef.current;
       const hoveredMem = hoveredMemRef.current;
+      const selectedMem = selectedMemRef.current;
       const clusterById = new Map<number, ClusterNode>();
       for (const n of clusterNodesNow) clusterById.set(n.id, n);
       const worldLeft = -cam.x * invS;
@@ -1403,10 +1446,14 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       // ── Sub-graph bundled routes ──
       if (isExpMode && subNodesNow.length > 0) {
         const bundlePaths = subBundlePathsRef.current;
-        if (bundlePaths.length > 0) {
+        const linesReady = now >= subLinesVisibleAfterRef.current;
+        if (bundlePaths.length > 0 && linesReady) {
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
           for (const path of bundlePaths) {
+            const s = subNodesNow[path.sourceIdx];
+            const t = subNodesNow[path.targetIdx];
+            if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) continue;
             const centerFade = 1 - path.coreIntrusion * 0.84;
             const width = (0.48 + path.intensity * 0.78) * invS * (1 - path.coreIntrusion * 0.6);
             const alpha = (0.012 + path.similarity * 0.045 + path.intensity * 0.028) * centerFade;
@@ -1513,21 +1560,29 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         for (const sn of subNodesNow) {
           if (sn.x == null || sn.y == null) continue;
           const isHov = hoveredMem === sn.memId;
+          const isSel = selectedMem === sn.memId;
           const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
-          const r = isHov ? baseR * 1.35 : baseR;
+          const r = isHov ? baseR * 1.35 : isSel ? baseR * 1.28 : baseR;
 
           ctx.save();
-          ctx.shadowBlur = (isHov ? 14 : 5 + (sn.importance || 0) * 3) * invS;
+          ctx.shadowBlur = (isHov ? 14 : isSel ? 12 : 5 + (sn.importance || 0) * 3) * invS;
           ctx.shadowColor = sn.glow;
           ctx.beginPath();
           ctx.arc(sn.x, sn.y, r, 0, Math.PI * 2);
           ctx.fillStyle = sn.color;
-          ctx.globalAlpha = 0.9;
+          ctx.globalAlpha = isSel ? 1 : 0.9;
           ctx.fill();
           ctx.restore();
           if (isHov) {
             hoveredNodeObj = sn;
             hoveredNodeR = r;
+          }
+        }
+        if (!hoveredNodeObj && selectedMem) {
+          const selectedNode = subNodesNow.find((n) => n.memId === selectedMem && n.x != null && n.y != null);
+          if (selectedNode) {
+            const baseR = nodeWorldR * (0.75 + (selectedNode.importance || 0) * 1.3);
+            pendingMemLabels.push({ sn: selectedNode, anchorR: baseR * 1.28, variant: 'hover' });
           }
         }
         if (hoveredNodeObj) {
@@ -1544,6 +1599,28 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           const nodeWorldR = nodeScreenR * invS;
           const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
           pendingMemLabels.push({ sn, anchorR: baseR * 1.35, variant: 'hover' });
+        }
+      }
+      if (useWebGLSub && isExpMode && selectedMem && selectedMem !== hoveredMem) {
+        const sn = subNodesNow.find((n) => n.memId === selectedMem);
+        if (sn && sn.x != null && sn.y != null) {
+          const expand = expandInfoRef.current;
+          const boundaryWorldR = (expand?.boundaryR || (viewMin * 0.33) / Math.max(0.1, cam.scale)) * 0.88;
+          const nodeScreenR = subNodeBaseScreenPx(viewMin, cam.scale, boundaryWorldR, subNodesNow.length);
+          const nodeWorldR = nodeScreenR * invS;
+          const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
+
+          ctx.save();
+          ctx.shadowBlur = 14 * invS;
+          ctx.shadowColor = sn.glow;
+          ctx.beginPath();
+          ctx.arc(sn.x, sn.y, baseR * 1.28, 0, Math.PI * 2);
+          ctx.fillStyle = sn.color;
+          ctx.globalAlpha = 0.34;
+          ctx.fill();
+          ctx.restore();
+
+          pendingMemLabels.push({ sn, anchorR: baseR * 1.28, variant: 'hover' });
         }
       }
 
@@ -1861,9 +1938,9 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
       (e.clientX - downPos.x) ** 2 + (e.clientY - downPos.y) ** 2 > 25
     );
 
-    if (!wasDrag && !suppressClickRef.current) {
-      const { x, y } = getWorldPos(e);
-      const hit = findNode(x, y);
+      if (!wasDrag && !suppressClickRef.current) {
+        const { x, y } = getWorldPos(e);
+        const hit = findNode(x, y);
 
       if (!hit) {
         if (expandedClusterRef.current !== null) {
@@ -1887,6 +1964,7 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
         }
       } else if (hit.type === 'cluster') {
         const hitId = (hit.node as ClusterNode).id;
+        selectedMemRef.current = null;
         // Clicking inside the already expanded cluster should be a no-op, not a collapse toggle.
         if (expandedClusterRef.current !== null && hitId === expandedClusterRef.current) {
           // no-op
@@ -1894,7 +1972,19 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
           expandCluster(hitId);
         }
       } else {
-        onMemoryClick((hit.node as MemSubNode).memId);
+        const memNode = hit.node as MemSubNode;
+        selectedMemRef.current = memNode.memId;
+        hoveredMemRef.current = memNode.memId;
+        const containerEl = containerRef.current;
+        if (containerEl && memNode.x != null && memNode.y != null) {
+          const camNow = cameraRef.current;
+          animateCamera({
+            x: containerEl.clientWidth / 2 - memNode.x * camNow.scale,
+            y: containerEl.clientHeight / 2 - memNode.y * camNow.scale,
+            scale: camNow.scale,
+          }, 260);
+        }
+        onMemoryClick(memNode.memId);
       }
     }
 
@@ -1971,3 +2061,5 @@ export default function ClusterGraph({ memories, embeddingsData, onMemoryClick }
     </div>
   );
 }
+
+export default memo(ClusterGraph, arePropsEqual);

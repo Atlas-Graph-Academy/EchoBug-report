@@ -263,6 +263,7 @@ export default function MemoryPreviewCanvas() {
   const [error, setError] = useState<string | null>(null);
   const [selectedEmotion, setSelectedEmotion] = useState('All');
   const [selectedRecord, setSelectedRecord] = useState<DisplayMemoryRecord | null>(null);
+  const [detailSource, setDetailSource] = useState<'stream' | 'constellation' | null>(null);
   const [narrativeMemoryId, setNarrativeMemoryId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'stream' | 'constellation'>('constellation');
 
@@ -298,7 +299,11 @@ export default function MemoryPreviewCanvas() {
     if (!selectedRecord) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedRecord(null);
+      if (event.key === 'Escape') {
+        setSelectedRecord(null);
+        setNarrativeMemoryId(null);
+        setDetailSource(null);
+      }
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -554,6 +559,7 @@ export default function MemoryPreviewCanvas() {
         const record = displayRecords[pill.index];
         if (record) {
           setSelectedRecord(record);
+          setDetailSource('stream');
           // 找到对应的原始记录 ID
           const originalRecord = filteredRecords[pill.index];
           if (originalRecord) {
@@ -594,10 +600,6 @@ export default function MemoryPreviewCanvas() {
     setNarrativeMemoryId(nodeId);
   }, [sortedRecords]);
 
-  const handleCloseNarrative = useCallback(() => {
-    setNarrativeMemoryId(null);
-  }, []);
-
   const handleConstellationMemoryClick = useCallback((memoryId: string) => {
     const record = sortedRecords.find(r => r.id === memoryId);
     if (!record) return;
@@ -622,8 +624,70 @@ export default function MemoryPreviewCanvas() {
       glow: emotionStyle.glow,
     });
 
+    setDetailSource('constellation');
     setNarrativeMemoryId(memoryId);
   }, [sortedRecords]);
+
+  const closeDetail = useCallback(() => {
+    setSelectedRecord(null);
+    setNarrativeMemoryId(null);
+    setDetailSource(null);
+  }, []);
+
+  const showConstellationDetail =
+    viewMode === 'constellation' && selectedRecord && detailSource === 'constellation';
+  const showStreamDetail = selectedRecord && detailSource === 'stream';
+
+  const detailCard = selectedRecord && (
+    <article className={`memory-detail-card${showConstellationDetail ? ' memory-detail-card-sidebar' : ''}`}>
+      <header className="memory-detail-header">
+        <div>
+          <h3>{selectedRecord.keyText}</h3>
+          <p>Created: {selectedRecord.createdTimeText}</p>
+        </div>
+        <button className="memory-detail-close" onClick={closeDetail}>
+          Close
+        </button>
+      </header>
+
+      {narrativeContext && (
+        <NarrativeGraph
+          currentMemory={narrativeContext.currentMemory}
+          chains={narrativeContext.chains}
+          onNodeClick={handleNarrativeNodeClick}
+        />
+      )}
+
+      <dl className="memory-detail-meta">
+        <div>
+          <dt>Category</dt>
+          <dd>{selectedRecord.category}</dd>
+        </div>
+        <div>
+          <dt>Object</dt>
+          <dd>{selectedRecord.object}</dd>
+        </div>
+        <div>
+          <dt>Emotion</dt>
+          <dd>{selectedRecord.emotion}</dd>
+        </div>
+        <div>
+          <dt>Visibility</dt>
+          <dd>{selectedRecord.visibility}</dd>
+        </div>
+      </dl>
+
+      <section className="memory-detail-section">
+        <h4>Description</h4>
+        <p>{selectedRecord.description}</p>
+      </section>
+
+      <section className="memory-detail-section">
+        <h4>Details</h4>
+        <p>{selectedRecord.details}</p>
+      </section>
+    </article>
+  );
 
   if (loading) {
     return <div className="memory-status">Loading memory data...</div>;
@@ -635,117 +699,79 @@ export default function MemoryPreviewCanvas() {
 
   return (
     <>
-      <div className="memory-canvas-wrapper">
-        <div className="memory-canvas-meta">
-          <h2>{viewMode === 'stream' ? 'Memory Stream' : 'Constellation'}</h2>
-          <div className="memory-view-toggle">
-            <button
-              className={viewMode === 'stream' ? 'active' : ''}
-              onClick={() => setViewMode('stream')}
-            >
-              Stream
-            </button>
-            <button
-              className={viewMode === 'constellation' ? 'active' : ''}
-              onClick={() => setViewMode('constellation')}
-            >
-              Constellation
-            </button>
-          </div>
-          <span>
-            {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions
-          </span>
-        </div>
-        {viewMode === 'stream' && (
-          <div className="memory-emotion-tags">
-            <button
-              className={`memory-emotion-tag ${selectedEmotion === 'All' ? 'active' : ''}`}
-              onClick={() => setSelectedEmotion('All')}
-            >
-              All ({sortedRecords.length})
-            </button>
-            {emotionSummary.map((item) => (
+      <div className={`memory-canvas-wrapper${showConstellationDetail ? ' memory-canvas-wrapper-with-panel' : ''}`}>
+        <div className="memory-canvas-main">
+          <div className="memory-canvas-meta">
+            <h2>{viewMode === 'stream' ? 'Memory Stream' : 'Constellation'}</h2>
+            <div className="memory-view-toggle">
               <button
-                key={item.emotion}
-                className={`memory-emotion-tag ${selectedEmotion === item.emotion ? 'active' : ''}`}
-                onClick={() => setSelectedEmotion(item.emotion)}
-                style={{
-                  borderColor: item.color,
-                  color: item.color,
-                  boxShadow: selectedEmotion === item.emotion ? `0 0 16px ${item.glow}` : 'none',
-                }}
+                className={viewMode === 'stream' ? 'active' : ''}
+                onClick={() => setViewMode('stream')}
               >
-                {item.emotion} ({item.count})
+                Stream
               </button>
-            ))}
+              <button
+                className={viewMode === 'constellation' ? 'active' : ''}
+                onClick={() => setViewMode('constellation')}
+              >
+                Constellation
+              </button>
+            </div>
+            <span>
+              {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions
+            </span>
           </div>
-        )}
-        {viewMode === 'stream' ? (
-          <div className="memory-canvas-scroll" ref={containerRef}>
-            <div ref={spacerRef} className="memory-canvas-spacer" />
-            <canvas ref={canvasRef} className="memory-canvas" onClick={handleCanvasClick} />
-          </div>
-        ) : (
-          embeddingsData && (
-            <ClusterGraph
-              memories={memoryNodes}
-              embeddingsData={embeddingsData}
-              onMemoryClick={handleConstellationMemoryClick}
-            />
-          )
+          {viewMode === 'stream' && (
+            <div className="memory-emotion-tags">
+              <button
+                className={`memory-emotion-tag ${selectedEmotion === 'All' ? 'active' : ''}`}
+                onClick={() => setSelectedEmotion('All')}
+              >
+                All ({sortedRecords.length})
+              </button>
+              {emotionSummary.map((item) => (
+                <button
+                  key={item.emotion}
+                  className={`memory-emotion-tag ${selectedEmotion === item.emotion ? 'active' : ''}`}
+                  onClick={() => setSelectedEmotion(item.emotion)}
+                  style={{
+                    borderColor: item.color,
+                    color: item.color,
+                    boxShadow: selectedEmotion === item.emotion ? `0 0 16px ${item.glow}` : 'none',
+                  }}
+                >
+                  {item.emotion} ({item.count})
+                </button>
+              ))}
+            </div>
+          )}
+          {viewMode === 'stream' ? (
+            <div className="memory-canvas-scroll" ref={containerRef}>
+              <div ref={spacerRef} className="memory-canvas-spacer" />
+              <canvas ref={canvasRef} className="memory-canvas" onClick={handleCanvasClick} />
+            </div>
+          ) : (
+            embeddingsData && (
+              <ClusterGraph
+                memories={memoryNodes}
+                embeddingsData={embeddingsData}
+                onMemoryClick={handleConstellationMemoryClick}
+              />
+            )
+          )}
+        </div>
+        {showConstellationDetail && (
+          <aside className="memory-detail-sidebar">
+            {detailCard}
+          </aside>
         )}
       </div>
 
-      {selectedRecord && (
-        <div className="memory-detail-backdrop" onClick={() => { setSelectedRecord(null); setNarrativeMemoryId(null); }}>
-          <article className="memory-detail-card" onClick={(event) => event.stopPropagation()}>
-            <header className="memory-detail-header">
-              <div>
-                <h3>{selectedRecord.keyText}</h3>
-                <p>Created: {selectedRecord.createdTimeText}</p>
-              </div>
-              <button className="memory-detail-close" onClick={() => { setSelectedRecord(null); setNarrativeMemoryId(null); }}>
-                Close
-              </button>
-            </header>
-
-            {narrativeContext && (
-              <NarrativeGraph
-                currentMemory={narrativeContext.currentMemory}
-                chains={narrativeContext.chains}
-                onNodeClick={handleNarrativeNodeClick}
-              />
-            )}
-
-            <dl className="memory-detail-meta">
-              <div>
-                <dt>Category</dt>
-                <dd>{selectedRecord.category}</dd>
-              </div>
-              <div>
-                <dt>Object</dt>
-                <dd>{selectedRecord.object}</dd>
-              </div>
-              <div>
-                <dt>Emotion</dt>
-                <dd>{selectedRecord.emotion}</dd>
-              </div>
-              <div>
-                <dt>Visibility</dt>
-                <dd>{selectedRecord.visibility}</dd>
-              </div>
-            </dl>
-
-            <section className="memory-detail-section">
-              <h4>Description</h4>
-              <p>{selectedRecord.description}</p>
-            </section>
-
-            <section className="memory-detail-section">
-              <h4>Details</h4>
-              <p>{selectedRecord.details}</p>
-            </section>
-          </article>
+      {showStreamDetail && (
+        <div className="memory-detail-backdrop" onClick={closeDetail}>
+          <div onClick={(event) => event.stopPropagation()}>
+            {detailCard}
+          </div>
         </div>
       )}
     </>
