@@ -326,6 +326,17 @@ function drawSmoothBundle(ctx: CanvasRenderingContext2D, points: BundlePathPoint
   ctx.lineTo(last.x, last.y);
 }
 
+function narrativeFocusPoint(cluster: ClusterNode, memId: string): { x: number; y: number } | null {
+  if (cluster.x == null || cluster.y == null) return null;
+  const seed = hash(`${cluster.id}:${memId}:focus-point`);
+  const angle = ((seed % 1000) / 1000) * Math.PI * 2;
+  const radial = cluster.radius * (0.22 + (((seed >>> 10) % 1000) / 1000) * 0.6);
+  return {
+    x: cluster.x + Math.cos(angle) * radial,
+    y: cluster.y + Math.sin(angle) * radial,
+  };
+}
+
 function ClusterGraph({
   memories,
   embeddingsData,
@@ -2300,6 +2311,101 @@ function ClusterGraph({
     hoveredNodeRef.current = null;
     hoveredMemRef.current = null;
   }, []);
+
+  const collectNarrativeFocusPoints = useCallback((ids: string[]) => {
+    if (ids.length === 0) return [] as Array<{ x: number; y: number }>;
+
+    const subPointById = new Map<string, { x: number; y: number }>();
+    for (const sn of subNodesRef.current) {
+      if (sn.x == null || sn.y == null) continue;
+      subPointById.set(sn.memId, { x: sn.x, y: sn.y });
+    }
+
+    const memToCluster = new Map<string, ClusterNode>();
+    const wanted = new Set(ids);
+    for (const cluster of clusterNodesRef.current) {
+      for (const memId of cluster.memberIds) {
+        if (wanted.has(memId)) memToCluster.set(memId, cluster);
+      }
+    }
+
+    const points: Array<{ x: number; y: number }> = [];
+    for (const memId of ids) {
+      const subPoint = subPointById.get(memId);
+      if (subPoint) {
+        points.push(subPoint);
+        continue;
+      }
+      const cluster = memToCluster.get(memId);
+      if (!cluster) continue;
+      const point = narrativeFocusPoint(cluster, memId);
+      if (point) points.push(point);
+    }
+    return points;
+  }, []);
+
+  useEffect(() => {
+    const focusIds = Array.from(new Set([...highlightedMemoryIds, ...sequenceMemoryIds]));
+    if (focusIds.length === 0) return;
+
+    let cancelled = false;
+    let tries = 0;
+
+    const fitToNarrativePoints = () => {
+      if (cancelled) return;
+      const container = containerRef.current;
+      if (!container) return;
+
+      const points = collectNarrativeFocusPoints(focusIds);
+      if (points.length === 0 && tries < 12) {
+        tries += 1;
+        requestAnimationFrame(fitToNarrativePoints);
+        return;
+      }
+      if (points.length === 0) return;
+
+      const vw = container.clientWidth;
+      const vh = container.clientHeight;
+      if (vw <= 0 || vh <= 0) return;
+
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (const p of points) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+
+      const worldPad = Math.max(50, Math.min(vw, vh) * 0.11);
+      minX -= worldPad;
+      maxX += worldPad;
+      minY -= worldPad;
+      maxY += worldPad;
+
+      const spanX = Math.max(1, maxX - minX);
+      const spanY = Math.max(1, maxY - minY);
+      const targetScaleRaw = Math.min(vw / spanX, vh / spanY);
+      const currentScale = cameraRef.current.scale;
+
+      const targetScale = points.length > 1
+        ? clamp(targetScaleRaw, 0.12, 2.2)
+        : clamp(Math.min(currentScale, 2.2), 0.8, 2.2);
+
+      const cx = (minX + maxX) * 0.5;
+      const cy = (minY + maxY) * 0.5;
+      animateCamera({
+        x: vw / 2 - cx * targetScale,
+        y: vh / 2 - cy * targetScale,
+        scale: targetScale,
+      }, 420);
+    };
+
+    fitToNarrativePoints();
+    return () => { cancelled = true; };
+  }, [highlightedMemoryIds, sequenceMemoryIds, collectNarrativeFocusPoints, animateCamera]);
 
   useEffect(() => {
     return () => {
