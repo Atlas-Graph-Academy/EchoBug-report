@@ -63,3 +63,26 @@ export interface CreatedIssue {
   url: string;
   title: string;
 }
+
+export interface MemoryRecord {
+  id: string;
+  object: string;
+  category: string;
+  emotion: string;
+  description: string;
+  details: string;
+  visibility: string;
+  location: string;
+  time: string;
+  createdAt: string;
+}
+
+export interface NarrativeNode {
+  id: string;
+  text: string;
+  createdAt: string;
+  object: string;
+  category: string;
+  emotion: string;
+  similarity?: number;
+}

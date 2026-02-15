@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import NarrativeGraph from '@/components/NarrativeGraph';
+import { buildNarrativeChains, type MemoryNode, type EmbeddingsData } from '@/lib/narrative';
 
 interface MemoryRecord {
   id: string;
@@ -41,6 +43,7 @@ interface PillLayout {
 }
 
 const CSV_PATH = '/echo-memories-2026-02-15.csv';
+const EMBEDDINGS_PATH = '/echo-embeddings.json';
 
 const EMOTION_PALETTE = [
   { color: '#ff9f43', glow: 'rgba(255,159,67,0.45)' },
@@ -254,20 +257,30 @@ export default function MemoryPreviewCanvas() {
   const layoutsRef = useRef<PillLayout[]>([]);
 
   const [records, setRecords] = useState<MemoryRecord[]>([]);
+  const [embeddingsData, setEmbeddingsData] = useState<EmbeddingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEmotion, setSelectedEmotion] = useState('All');
   const [selectedRecord, setSelectedRecord] = useState<DisplayMemoryRecord | null>(null);
+  const [narrativeMemoryId, setNarrativeMemoryId] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const response = await fetch(CSV_PATH);
-        if (!response.ok) throw new Error(`Failed to load memory CSV (${response.status})`);
+        const [csvResponse, embResponse] = await Promise.all([
+          fetch(CSV_PATH),
+          fetch(EMBEDDINGS_PATH),
+        ]);
 
-        const content = await response.text();
-        const parsedRows = parseCsv(content);
-        setRecords(mapRecords(parsedRows));
+        if (!csvResponse.ok) throw new Error(`Failed to load memory CSV (${csvResponse.status})`);
+
+        const content = await csvResponse.text();
+        setRecords(mapRecords(parseCsv(content)));
+
+        if (embResponse.ok) {
+          const embJson = await embResponse.json();
+          setEmbeddingsData(embJson as EmbeddingsData);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to read memory data';
         setError(message);
@@ -482,6 +495,44 @@ export default function MemoryPreviewCanvas() {
     };
   }, [displayRecords]);
 
+  const memoryNodes = useMemo<MemoryNode[]>(() => {
+    return sortedRecords.map(record => ({
+      id: record.id,
+      text: record.description || record.object,
+      createdAt: record.createdAt || record.time,
+      object: normalizeValue(record.object),
+      category: normalizeValue(record.category),
+      emotion: normalizeValue(record.emotion),
+    }));
+  }, [sortedRecords]);
+
+  const narrativeContext = useMemo(() => {
+    if (!narrativeMemoryId || !embeddingsData) return null;
+
+    const currentNode = memoryNodes.find(n => n.id === narrativeMemoryId);
+    if (!currentNode) return null;
+
+    const chains = buildNarrativeChains(currentNode, memoryNodes, embeddingsData, {
+      similarityThreshold: 0.4,
+      upstreamCount: 3,
+      downstreamCount: 3,
+      objectCount: 5,
+      categoryCount: 5,
+      surpriseRange: [0.25, 0.4],
+    });
+
+    return {
+      currentMemory: currentNode,
+      chains: {
+        upstream: chains.primary.upstream,
+        downstream: chains.primary.downstream,
+        objectChain: chains.objectChain,
+        categoryChain: chains.categoryChain,
+        surprise: chains.surprise,
+      },
+    };
+  }, [narrativeMemoryId, memoryNodes, embeddingsData]);
+
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -498,11 +549,51 @@ export default function MemoryPreviewCanvas() {
 
       if (insideX && insideY) {
         const record = displayRecords[pill.index];
-        if (record) setSelectedRecord(record);
+        if (record) {
+          setSelectedRecord(record);
+          // 找到对应的原始记录 ID
+          const originalRecord = filteredRecords[pill.index];
+          if (originalRecord) {
+            setNarrativeMemoryId(originalRecord.id);
+          }
+        }
         return;
       }
     }
   };
+
+  const handleNarrativeNodeClick = useCallback((nodeId: string) => {
+    // 跳转到该记忆节点
+    const record = sortedRecords.find(r => r.id === nodeId);
+    if (!record) return;
+
+    // 更新选中的记忆
+    const keyText = normalizeValue(record.object || record.id);
+    const createdSource = record.createdAt || record.time;
+    const shortTimeText = formatShortTime(record.time || record.createdAt);
+    const emotion = normalizeValue(record.emotion);
+    const emotionStyle = getEmotionStyle(emotion);
+
+    setSelectedRecord({
+      keyText,
+      shortTimeText,
+      createdTimeText: formatCreatedTime(createdSource),
+      category: normalizeValue(record.category),
+      object: normalizeValue(record.object || record.id),
+      emotion,
+      visibility: normalizeValue(record.visibility || record.location),
+      description: normalizeValue(record.description),
+      details: normalizeValue(record.details),
+      color: emotionStyle.color,
+      glow: emotionStyle.glow,
+    });
+
+    setNarrativeMemoryId(nodeId);
+  }, [sortedRecords]);
+
+  const handleCloseNarrative = useCallback(() => {
+    setNarrativeMemoryId(null);
+  }, []);
 
   if (loading) {
     return <div className="memory-status">Loading memory data...</div>;
@@ -550,17 +641,25 @@ export default function MemoryPreviewCanvas() {
       </div>
 
       {selectedRecord && (
-        <div className="memory-detail-backdrop" onClick={() => setSelectedRecord(null)}>
+        <div className="memory-detail-backdrop" onClick={() => { setSelectedRecord(null); setNarrativeMemoryId(null); }}>
           <article className="memory-detail-card" onClick={(event) => event.stopPropagation()}>
             <header className="memory-detail-header">
               <div>
                 <h3>{selectedRecord.keyText}</h3>
                 <p>Created: {selectedRecord.createdTimeText}</p>
               </div>
-              <button className="memory-detail-close" onClick={() => setSelectedRecord(null)}>
+              <button className="memory-detail-close" onClick={() => { setSelectedRecord(null); setNarrativeMemoryId(null); }}>
                 Close
               </button>
             </header>
+
+            {narrativeContext && (
+              <NarrativeGraph
+                currentMemory={narrativeContext.currentMemory}
+                chains={narrativeContext.chains}
+                onNodeClick={handleNarrativeNodeClick}
+              />
+            )}
 
             <dl className="memory-detail-meta">
               <div>
