@@ -392,6 +392,9 @@ export default function MemoryPreviewCanvas() {
   const constellationMainRef = useRef<HTMLDivElement>(null);
   const metaMenuRef = useRef<HTMLDivElement>(null);
   const detailCardRef = useRef<HTMLElement>(null);
+  const peoplePanelRef = useRef<HTMLDivElement>(null);
+  const spineNarrativePanelRef = useRef<HTMLDivElement>(null);
+  const personNarrativePanelRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -421,6 +424,15 @@ export default function MemoryPreviewCanvas() {
   const [personNarrativeKeyIdMap, setPersonNarrativeKeyIdMap] = useState<Record<string, string>>({});
   const [personNarrativeLoading, setPersonNarrativeLoading] = useState(false);
   const [personListOpen, setPersonListOpen] = useState(false);
+  const [peoplePanelVisible, setPeoplePanelVisible] = useState(true);
+  const [peoplePanelDetached, setPeoplePanelDetached] = useState(false);
+  const [peoplePanelPosition, setPeoplePanelPosition] = useState<{ left: number; top: number } | null>(null);
+  const [spineNarrativeVisible, setSpineNarrativeVisible] = useState(true);
+  const [spineNarrativeDetached, setSpineNarrativeDetached] = useState(false);
+  const [spineNarrativePosition, setSpineNarrativePosition] = useState<{ left: number; top: number } | null>(null);
+  const [personNarrativeVisible, setPersonNarrativeVisible] = useState(true);
+  const [personNarrativeDetached, setPersonNarrativeDetached] = useState(false);
+  const [personNarrativePosition, setPersonNarrativePosition] = useState<{ left: number; top: number } | null>(null);
 
   // Reset narrative graph panel when narrative overlay closes
   useEffect(() => {
@@ -574,7 +586,11 @@ export default function MemoryPreviewCanvas() {
   }, [activeEntity, entitySummary]);
 
   useEffect(() => {
-    if (activeEntity) setPersonListOpen(true);
+    if (activeEntity) {
+      setPersonListOpen(true);
+      setPersonNarrativeVisible(true);
+      setPeoplePanelVisible(true);
+    }
   }, [activeEntity]);
 
   useEffect(() => {
@@ -1054,6 +1070,91 @@ export default function MemoryPreviewCanvas() {
   const showConstellationDetail = showNarrativeOverlay && !!selectedRecord;
   const showStreamDetail = selectedRecord && detailSource === 'stream';
 
+  useEffect(() => {
+    if (showNarrativeOverlay) {
+      setSpineNarrativeVisible(true);
+      setSpineNarrativeDetached(false);
+      setSpineNarrativePosition(null);
+    }
+  }, [showNarrativeOverlay, narrativeMemoryId]);
+
+  const handleFloatingDragStart = useCallback(
+    (panel: 'people' | 'spine' | 'person', event: React.MouseEvent<HTMLElement>) => {
+      if (!constellationMainRef.current) return;
+      const panelEl =
+        panel === 'people'
+          ? peoplePanelRef.current
+          : panel === 'spine'
+            ? spineNarrativePanelRef.current
+            : personNarrativePanelRef.current;
+      if (!panelEl) return;
+
+      event.preventDefault();
+
+      const mainRect = constellationMainRef.current.getBoundingClientRect();
+      const panelRect = panelEl.getBoundingClientRect();
+      const offsetX = event.clientX - panelRect.left;
+      const offsetY = event.clientY - panelRect.top;
+
+      if (panel === 'people') setPeoplePanelDetached(true);
+      if (panel === 'spine') setSpineNarrativeDetached(true);
+      if (panel === 'person') setPersonNarrativeDetached(true);
+
+      const onMove = (ev: MouseEvent) => {
+        const sideSafe = 10;
+        const topSafe = 54;
+        const left = clamp(
+          ev.clientX - mainRect.left - offsetX,
+          sideSafe,
+          Math.max(sideSafe, mainRect.width - panelRect.width - sideSafe),
+        );
+        const top = clamp(
+          ev.clientY - mainRect.top - offsetY,
+          topSafe,
+          Math.max(topSafe, mainRect.height - panelRect.height - sideSafe),
+        );
+
+        const next = { left: Math.round(left), top: Math.round(top) };
+        if (panel === 'people') setPeoplePanelPosition(next);
+        if (panel === 'spine') setSpineNarrativePosition(next);
+        if (panel === 'person') setPersonNarrativePosition(next);
+      };
+
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    []
+  );
+
+  const peoplePanelStyle = useMemo(() => {
+    if (!peoplePanelDetached || !peoplePanelPosition || !constellationMainRef.current) return undefined;
+    const main = constellationMainRef.current;
+    const left = clamp(peoplePanelPosition.left, 10, Math.max(10, main.clientWidth - 360));
+    const top = clamp(peoplePanelPosition.top, 54, Math.max(54, main.clientHeight - 220));
+    return { left: `${left}px`, top: `${top}px` };
+  }, [peoplePanelDetached, peoplePanelPosition]);
+
+  const spineNarrativeStyle = useMemo(() => {
+    if (!spineNarrativeDetached || !spineNarrativePosition || !constellationMainRef.current) return undefined;
+    const main = constellationMainRef.current;
+    const left = clamp(spineNarrativePosition.left, 10, Math.max(10, main.clientWidth - 340));
+    const top = clamp(spineNarrativePosition.top, 54, Math.max(54, main.clientHeight - 180));
+    return { left: `${left}px`, top: `${top}px` };
+  }, [spineNarrativeDetached, spineNarrativePosition]);
+
+  const personNarrativeStyle = useMemo(() => {
+    if (!personNarrativeDetached || !personNarrativePosition || !constellationMainRef.current) return undefined;
+    const main = constellationMainRef.current;
+    const left = clamp(personNarrativePosition.left, 10, Math.max(10, main.clientWidth - 340));
+    const top = clamp(personNarrativePosition.top, 54, Math.max(54, main.clientHeight - 180));
+    return { left: `${left}px`, top: `${top}px` };
+  }, [personNarrativeDetached, personNarrativePosition]);
+
   const constellationHighlightedMemoryIds = useMemo(() => {
     if (showNarrativeOverlay && constellationFocusActive) return narrativeContext?.listedIds ?? [];
     return activePersonEntity?.memoryIds ?? [];
@@ -1235,54 +1336,6 @@ export default function MemoryPreviewCanvas() {
               {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions · {entitySummary.people.length} people
             </span>
           </div>
-          <div className="memory-entity-strip">
-            <div className="memory-entity-group">
-              <strong>People</strong>
-              {entitySummary.people.slice(0, 32).map((entity) => {
-                const isActive =
-                  activeEntity?.type === 'person' && activeEntity.name.toLowerCase() === entity.name.toLowerCase();
-                return (
-                  <button
-                    key={`person-${entity.name}`}
-                    className={`memory-entity-chip memory-entity-chip-person ${isActive ? 'active' : ''}`}
-                    onClick={() => {
-                      setActiveEntity(isActive ? null : { name: entity.name, type: 'person' });
-                    }}
-                    title={`Memories: ${entity.memoryIds.length}`}
-                  >
-                    {entity.name} ({entity.memoryIds.length})
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          {activeEntity && (
-            <div className="memory-person-panel">
-              <div className="memory-person-panel-header">
-                <h3>{activeEntity.name}</h3>
-                <div>
-                  <span>{activePersonRecords.length} memories</span>
-                  <button onClick={() => setPersonListOpen((v) => !v)}>
-                    {personListOpen ? 'Hide list' : 'Show list'}
-                  </button>
-                </div>
-              </div>
-              {personListOpen && (
-                <div className="memory-person-list">
-                  {activePersonRecords.slice(0, 40).map((record) => (
-                    <button
-                      key={`person-memory-${record.id}`}
-                      className="memory-person-list-item"
-                      onClick={() => handlePersonMemoryClick(record.id)}
-                    >
-                      <strong>{normalizeValue(record.object || record.id)}</strong>
-                      <span>{formatShortTime(record.time || record.createdAt)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           {viewMode === 'stream' && (
             <div className="memory-emotion-tags">
               <button
@@ -1326,6 +1379,78 @@ export default function MemoryPreviewCanvas() {
               />
             )
           )}
+          {viewMode === 'constellation' && !peoplePanelVisible && (
+            <button className="memory-floating-reopen memory-people-reopen" onClick={() => setPeoplePanelVisible(true)}>
+              People
+            </button>
+          )}
+          {viewMode === 'constellation' && peoplePanelVisible && (
+            <div
+              ref={peoplePanelRef}
+              className={`memory-people-floating${peoplePanelDetached ? ' memory-floating-detached' : ''}`}
+              style={peoplePanelStyle}
+            >
+              <div className="memory-floating-header" onMouseDown={(e) => handleFloatingDragStart('people', e)}>
+                <h3>People</h3>
+                <div>
+                  <span>{entitySummary.people.length}</span>
+                  <button
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPeoplePanelVisible(false);
+                    }}
+                    aria-label="Close people list"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div className="memory-people-chip-list">
+                {entitySummary.people.slice(0, 64).map((entity) => {
+                  const isActive =
+                    activeEntity?.type === 'person' && activeEntity.name.toLowerCase() === entity.name.toLowerCase();
+                  return (
+                    <button
+                      key={`person-${entity.name}`}
+                      className={`memory-entity-chip memory-entity-chip-person ${isActive ? 'active' : ''}`}
+                      onClick={() => setActiveEntity(isActive ? null : { name: entity.name, type: 'person' })}
+                      title={`Memories: ${entity.memoryIds.length}`}
+                    >
+                      {entity.name} ({entity.memoryIds.length})
+                    </button>
+                  );
+                })}
+              </div>
+              {activeEntity && (
+                <div className="memory-person-panel-inline">
+                  <div className="memory-person-panel-header">
+                    <h3>{activeEntity.name}</h3>
+                    <div>
+                      <span>{activePersonRecords.length} memories</span>
+                      <button onClick={() => setPersonListOpen((v) => !v)}>
+                        {personListOpen ? 'Hide list' : 'Show list'}
+                      </button>
+                    </div>
+                  </div>
+                  {personListOpen && (
+                    <div className="memory-person-list">
+                      {activePersonRecords.slice(0, 40).map((record) => (
+                        <button
+                          key={`person-memory-${record.id}`}
+                          className="memory-person-list-item"
+                          onClick={() => handlePersonMemoryClick(record.id)}
+                        >
+                          <strong>{normalizeValue(record.object || record.id)}</strong>
+                          <span>{formatShortTime(record.time || record.createdAt)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {showNarrativeOverlay && narrativeContext && (
             <>
               <button
@@ -1348,47 +1473,93 @@ export default function MemoryPreviewCanvas() {
               </div>
             </>
           )}
-          {showNarrativeOverlay && (narrativeLoading || narrativeText) && (
+          {showNarrativeOverlay && (narrativeLoading || narrativeText) && !spineNarrativeVisible && (
+            <button className="memory-floating-reopen memory-narrative-reopen" onClick={() => setSpineNarrativeVisible(true)}>
+              Narrative
+            </button>
+          )}
+          {showNarrativeOverlay && (narrativeLoading || narrativeText) && spineNarrativeVisible && (
             <div
-              className="narrative-text-floating"
-              onClick={(e) => {
-                const target = e.target as HTMLElement;
-                const memId = target.dataset?.memId;
-                if (memId) showDetailForMemory(memId);
-              }}
+              ref={spineNarrativePanelRef}
+              className={`narrative-text-floating${spineNarrativeDetached ? ' memory-floating-detached' : ''}`}
+              style={spineNarrativeStyle}
             >
-              {narrativeLoading ? (
-                <div className="narrative-text-loading">Generating narrative...</div>
-              ) : (
-                <div
-                  className="narrative-text-body"
-                  dangerouslySetInnerHTML={{
-                    __html: buildNarrativeHtml(narrativeText ?? '', narrativeKeyIdMap)
+              <div className="memory-floating-header" onMouseDown={(e) => handleFloatingDragStart('spine', e)}>
+                <h3>Narrative</h3>
+                <button
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSpineNarrativeVisible(false);
                   }}
-                />
-              )}
+                  aria-label="Close narrative text"
+                >
+                  ×
+                </button>
+              </div>
+              <div
+                onClick={(e) => {
+                  const target = e.target as HTMLElement;
+                  const memId = target.dataset?.memId;
+                  if (memId) showDetailForMemory(memId);
+                }}
+              >
+                {narrativeLoading ? (
+                  <div className="narrative-text-loading">Generating narrative...</div>
+                ) : (
+                  <div
+                    className="narrative-text-body"
+                    dangerouslySetInnerHTML={{
+                      __html: buildNarrativeHtml(narrativeText ?? '', narrativeKeyIdMap)
+                    }}
+                  />
+                )}
+              </div>
             </div>
           )}
-          {viewMode === 'constellation' && activeEntity && (personNarrativeLoading || personNarrativeText) && (
+          {viewMode === 'constellation' && activeEntity && (personNarrativeLoading || personNarrativeText) && !personNarrativeVisible && (
+            <button className="memory-floating-reopen memory-person-narrative-reopen" onClick={() => setPersonNarrativeVisible(true)}>
+              {activeEntity.name}
+            </button>
+          )}
+          {viewMode === 'constellation' && activeEntity && (personNarrativeLoading || personNarrativeText) && personNarrativeVisible && (
             <div
-              className="narrative-text-floating person-narrative-floating"
-              onClick={(e) => {
-                const target = e.target as HTMLElement;
-                const memId = target.dataset?.memId;
-                if (memId) handlePersonMemoryClick(memId);
-              }}
+              ref={personNarrativePanelRef}
+              className={`narrative-text-floating person-narrative-floating${personNarrativeDetached ? ' memory-floating-detached' : ''}`}
+              style={personNarrativeStyle}
             >
-              <div className="person-narrative-title">Narrative for {activeEntity.name}</div>
-              {personNarrativeLoading ? (
-                <div className="narrative-text-loading">Generating narrative...</div>
-              ) : (
-                <div
-                  className="narrative-text-body"
-                  dangerouslySetInnerHTML={{
-                    __html: buildNarrativeHtml(personNarrativeText ?? '', personNarrativeKeyIdMap),
+              <div className="memory-floating-header" onMouseDown={(e) => handleFloatingDragStart('person', e)}>
+                <h3>{activeEntity.name}</h3>
+                <button
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPersonNarrativeVisible(false);
                   }}
-                />
-              )}
+                  aria-label="Close person narrative"
+                >
+                  ×
+                </button>
+              </div>
+              <div
+                onClick={(e) => {
+                  const target = e.target as HTMLElement;
+                  const memId = target.dataset?.memId;
+                  if (memId) handlePersonMemoryClick(memId);
+                }}
+              >
+                <div className="person-narrative-title">Narrative for {activeEntity.name}</div>
+                {personNarrativeLoading ? (
+                  <div className="narrative-text-loading">Generating narrative...</div>
+                ) : (
+                  <div
+                    className="narrative-text-body"
+                    dangerouslySetInnerHTML={{
+                      __html: buildNarrativeHtml(personNarrativeText ?? '', personNarrativeKeyIdMap),
+                    }}
+                  />
+                )}
+              </div>
             </div>
           )}
           {showConstellationDetail && detailCard}
