@@ -279,6 +279,8 @@ export default function MemoryPreviewCanvas() {
   const [constellationDetailAnchor, setConstellationDetailAnchor] = useState<{ x: number; y: number } | null>(null);
   const [isDetailDetached, setIsDetailDetached] = useState(false);
   const [detachedDetailPosition, setDetachedDetailPosition] = useState<{ left: number; top: number } | null>(null);
+  const [narrativeText, setNarrativeText] = useState<string | null>(null);
+  const [narrativeLoading, setNarrativeLoading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -592,6 +594,61 @@ export default function MemoryPreviewCanvas() {
       listedIds,
     };
   }, [narrativeMemoryId, memoryNodes, embeddingsData]);
+
+  // Fetch AI narrative text when narrative chain changes
+  useEffect(() => {
+    if (!narrativeContext) {
+      setNarrativeText(null);
+      return;
+    }
+
+    const spineNodes = [
+      ...narrativeContext.chains.upstream,
+      narrativeContext.currentMemory,
+      ...narrativeContext.chains.downstream,
+    ].sort((a, b) => {
+      const ta = new Date(a.createdAt).getTime();
+      const tb = new Date(b.createdAt).getTime();
+      return (Number.isNaN(ta) ? 0 : ta) - (Number.isNaN(tb) ? 0 : tb);
+    });
+
+    if (spineNodes.length === 0) return;
+
+    // Look up full description/details from sortedRecords
+    const recordMap = new Map(sortedRecords.map(r => [r.id, r]));
+    const memories = spineNodes.map(node => {
+      const rec = recordMap.get(node.id);
+      return {
+        key: node.key,
+        description: rec?.description || node.text,
+        details: rec?.details || '',
+        createdAt: node.createdAt,
+      };
+    });
+
+    let cancelled = false;
+    setNarrativeLoading(true);
+
+    fetch('/api/narrative-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memories }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (!cancelled && data.narrative) {
+          setNarrativeText(data.narrative);
+        }
+      })
+      .catch(err => {
+        console.error('[narrative-text] fetch error:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setNarrativeLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [narrativeContext, sortedRecords]);
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const container = containerRef.current;
@@ -941,6 +998,22 @@ export default function MemoryPreviewCanvas() {
                 onNodeClick={handleNarrativeNodeClick}
                 resizable
               />
+            </div>
+          )}
+          {showConstellationDetail && (narrativeLoading || narrativeText) && (
+            <div className="narrative-text-floating">
+              {narrativeLoading ? (
+                <div className="narrative-text-loading">Generating narrative...</div>
+              ) : (
+                <div
+                  className="narrative-text-body"
+                  dangerouslySetInnerHTML={{
+                    __html: (narrativeText ?? '')
+                      .replace(/\*\*(.+?)\*\*/g, '<strong class="narrative-key">$1</strong>')
+                      .replace(/\n\n+/g, '<br/><br/>')
+                  }}
+                />
+              )}
             </div>
           )}
           {showConstellationDetail && detailCard}

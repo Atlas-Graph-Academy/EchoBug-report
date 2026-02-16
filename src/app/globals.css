@@ -1194,7 +1194,60 @@ body.narrative-graph-resizing {
   cursor: nwse-resize;
 }
 
+/* ── Narrative Text Floating Panel ── */
+.narrative-text-floating {
+  position: absolute;
+  left: 16px;
+  top: 80px;
+  z-index: 36;
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 16px 14px;
+  background: rgba(12, 20, 38, 0.88);
+  backdrop-filter: blur(12px);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 210, 211, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 210, 211, 0.25) transparent;
+}
+.narrative-text-floating::-webkit-scrollbar {
+  width: 4px;
+}
+.narrative-text-floating::-webkit-scrollbar-thumb {
+  background: rgba(0, 210, 211, 0.25);
+  border-radius: 2px;
+}
+.narrative-text-loading {
+  color: rgba(0, 210, 211, 0.7);
+  font-size: 12px;
+  font-style: italic;
+  animation: narrative-pulse 1.5s ease-in-out infinite;
+}
+@keyframes narrative-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.narrative-text-body {
+  font-size: 13px;
+  line-height: 1.75;
+  color: rgba(200, 220, 240, 0.85);
+}
+.narrative-key {
+  color: #00d2d3;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(0, 210, 211, 0.35);
+}
+
 @media (max-width: 720px) {
+  .narrative-text-floating {
+    width: calc(100% - 24px);
+    left: 12px;
+    top: 60px;
+    max-height: 40vh;
+  }
   .narrative-graph-container {
     height: 340px;
   }
