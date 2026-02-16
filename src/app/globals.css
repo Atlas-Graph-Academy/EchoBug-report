@@ -798,6 +798,120 @@ main {
   font-size: 12px;
   color: #96b4c7;
 }
+.memory-entity-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px 10px;
+}
+.memory-entity-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+}
+.memory-entity-group strong {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #9fc2d8;
+}
+.memory-entity-chip {
+  flex-shrink: 0;
+  border: 1px solid rgba(201, 225, 255, 0.25);
+  background: rgba(255,255,255,0.03);
+  border-radius: 999px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: #cfe5f7;
+  cursor: pointer;
+}
+.memory-entity-chip:hover {
+  background: rgba(255,255,255,0.08);
+}
+.memory-entity-chip-person {
+  border-color: rgba(94, 234, 212, 0.45);
+  color: #7ee8d7;
+}
+.memory-entity-chip-place {
+  border-color: rgba(147, 197, 253, 0.45);
+  color: #9fd2ff;
+}
+.memory-entity-chip.active {
+  background: rgba(255,255,255,0.12);
+  box-shadow: 0 0 14px rgba(120, 190, 255, 0.25);
+}
+.memory-person-panel {
+  margin: 0 14px 10px;
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  background: rgba(8, 16, 30, 0.65);
+  border-radius: 10px;
+  padding: 10px;
+}
+.memory-person-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.memory-person-panel-header h3 {
+  font-size: 14px;
+  color: #d6f7ef;
+}
+.memory-person-panel-header div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.memory-person-panel-header span {
+  font-size: 12px;
+  color: #98c7c2;
+}
+.memory-person-panel-header button {
+  border: 1px solid rgba(94, 234, 212, 0.3);
+  background: rgba(94, 234, 212, 0.08);
+  color: #7ee8d7;
+  border-radius: 8px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.memory-person-panel-header button:hover {
+  background: rgba(94, 234, 212, 0.16);
+}
+.memory-person-list {
+  margin-top: 8px;
+  max-height: 148px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.memory-person-list-item {
+  border: 1px solid rgba(201, 225, 255, 0.2);
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #cfe5f7;
+  text-align: left;
+}
+.memory-person-list-item:hover {
+  background: rgba(255,255,255,0.08);
+}
+.memory-person-list-item strong {
+  font-size: 12px;
+  color: #dff6ff;
+}
+.memory-person-list-item span {
+  font-size: 11px;
+  color: #91b4c8;
+}
 .memory-emotion-tags {
   position: sticky;
   top: 0;
@@ -1320,6 +1434,18 @@ body.narrative-graph-resizing {
   line-height: 1.75;
   color: rgba(200, 220, 240, 0.85);
 }
+.person-narrative-floating {
+  left: auto;
+  right: 16px;
+  top: 80px;
+  border-color: rgba(94, 234, 212, 0.25);
+}
+.person-narrative-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #7ee8d7;
+  margin-bottom: 8px;
+}
 .narrative-key {
   color: #00d2d3;
   font-weight: 600;
@@ -1341,6 +1467,11 @@ body.narrative-graph-resizing {
     left: 12px;
     top: 60px;
     max-height: 40vh;
+  }
+  .person-narrative-floating {
+    right: 12px;
+    left: 12px;
+    top: 250px;
   }
   .narrative-graph-container {
     height: 340px;

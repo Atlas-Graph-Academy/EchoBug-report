@@ -43,6 +43,14 @@ interface PillLayout {
   text: string;
 }
 
+type EntityType = 'person' | 'place';
+
+interface ExtractedEntity {
+  type: EntityType;
+  name: string;
+  memoryIds: string[];
+}
+
 const CSV_PATH = '/echo-memories-2026-02-15.csv';
 const EMBEDDINGS_PATH = '/echo-embeddings.json';
 
@@ -248,10 +256,135 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+const ENTITY_STOPWORDS = new Set([
+  'Unknown',
+  'The',
+  'This',
+  'That',
+  'And',
+  'But',
+  'For',
+  'With',
+  'Without',
+  'Today',
+  'Yesterday',
+  'Tomorrow',
+  'Echo',
+  'AI',
+]);
+
+function normalizeEntityName(raw: string): string {
+  return raw.replace(/^[^A-Za-z@]+|[^A-Za-z0-9.' -]+$/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function addEntity(map: Map<string, ExtractedEntity>, type: EntityType, nameRaw: string, memoryId: string) {
+  const name = normalizeEntityName(nameRaw);
+  if (!name || ENTITY_STOPWORDS.has(name)) return;
+  if (/^\d+$/.test(name)) return;
+
+  const key = `${type}:${name.toLowerCase()}`;
+  const existing = map.get(key);
+  if (existing) {
+    if (!existing.memoryIds.includes(memoryId)) existing.memoryIds.push(memoryId);
+    return;
+  }
+
+  map.set(key, { type, name, memoryIds: [memoryId] });
+}
+
+function splitLocationParts(location: string): string[] {
+  return location
+    .split(/[;,/]/g)
+    .flatMap((part) => part.split(/\(|\)/g))
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function extractEntitiesFromRecord(record: MemoryRecord, map: Map<string, ExtractedEntity>) {
+  const memoryId = record.id;
+  const keyText = normalizeValue(record.object);
+  const description = normalizeValue(record.description);
+  const location = normalizeValue(record.location);
+  const source = `${keyText}\n${description}`;
+
+  const mentionRegex = /@([A-Za-z][A-Za-z0-9_.-]{1,40})/g;
+  let mentionMatch = mentionRegex.exec(source);
+  while (mentionMatch) {
+    addEntity(map, 'person', mentionMatch[1], memoryId);
+    mentionMatch = mentionRegex.exec(source);
+  }
+
+  const personContextRegex = /\b(?:with|from|met|meeting with|asked|learned from|talked to)\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,2})\b/g;
+  let personMatch = personContextRegex.exec(source);
+  while (personMatch) {
+    addEntity(map, 'person', personMatch[1], memoryId);
+    personMatch = personContextRegex.exec(source);
+  }
+
+  if (location !== 'Unknown') {
+    for (const locationPart of splitLocationParts(location)) {
+      addEntity(map, 'place', locationPart, memoryId);
+    }
+  }
+
+  const placeContextRegex = /\b(?:in|at|from|to|near)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})\b/g;
+  let placeMatch = placeContextRegex.exec(source);
+  while (placeMatch) {
+    addEntity(map, 'place', placeMatch[1], memoryId);
+    placeMatch = placeContextRegex.exec(source);
+  }
+}
+
 function getEmotionStyle(emotion: string) {
   const key = normalizeValue(emotion).toLowerCase();
   const style = EMOTION_PALETTE[hashEmotion(key) % EMOTION_PALETTE.length];
   return style;
+}
+
+function buildNarrativeHtml(rawText: string, keyIdMap: Record<string, string>): string {
+  const raw = rawText
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\n\n+/g, '\n\n');
+
+  const entries = Object.entries(keyIdMap)
+    .filter(([k]) => k.length >= 2)
+    .sort((a, b) => b[0].length - a[0].length);
+
+  if (entries.length === 0) return raw.replace(/\n\n/g, '<br/><br/>');
+
+  const escapedKeys = entries.map(([k]) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const combined = new RegExp(`(${escapedKeys.join('|')})`, 'gi');
+  const lowerMap = new Map(entries.map(([k, id]) => [k.toLowerCase(), id]));
+
+  const html = raw.replace(combined, (match) => {
+    const id = lowerMap.get(match.toLowerCase());
+    if (id) return `<span class="narrative-key narrative-key-link" data-mem-id="${id}">${match}</span>`;
+    return match;
+  });
+
+  return html.replace(/\n\n/g, '<br/><br/>');
+}
+
+function toDisplayMemoryRecord(record: MemoryRecord): DisplayMemoryRecord {
+  const keyText = normalizeValue(record.object || record.id);
+  const createdSource = record.createdAt || record.time;
+  const shortTimeText = formatShortTime(record.time || record.createdAt);
+  const emotion = normalizeValue(record.emotion);
+  const emotionStyle = getEmotionStyle(emotion);
+
+  return {
+    keyText,
+    shortTimeText,
+    createdTimeText: formatCreatedTime(createdSource),
+    category: normalizeValue(record.category),
+    object: normalizeValue(record.object || record.id),
+    emotion,
+    visibility: normalizeValue(record.visibility || record.location),
+    description: normalizeValue(record.description),
+    details: normalizeValue(record.details),
+    color: emotionStyle.color,
+    glow: emotionStyle.glow,
+  };
 }
 
 export default function MemoryPreviewCanvas() {
@@ -283,6 +416,11 @@ export default function MemoryPreviewCanvas() {
   const [narrativeKeyIdMap, setNarrativeKeyIdMap] = useState<Record<string, string>>({});
   const [narrativeLoading, setNarrativeLoading] = useState(false);
   const [narrativeGraphOpen, setNarrativeGraphOpen] = useState(false);
+  const [activeEntity, setActiveEntity] = useState<{ type: 'person'; name: string } | null>(null);
+  const [personNarrativeText, setPersonNarrativeText] = useState<string | null>(null);
+  const [personNarrativeKeyIdMap, setPersonNarrativeKeyIdMap] = useState<Record<string, string>>({});
+  const [personNarrativeLoading, setPersonNarrativeLoading] = useState(false);
+  const [personListOpen, setPersonListOpen] = useState(false);
 
   // Reset narrative graph panel when narrative overlay closes
   useEffect(() => {
@@ -363,34 +501,61 @@ export default function MemoryPreviewCanvas() {
       .sort((a, b) => b.count - a.count || a.emotion.localeCompare(b.emotion));
   }, [sortedRecords]);
 
+  const entitySummary = useMemo(() => {
+    const entityMap = new Map<string, ExtractedEntity>();
+    for (const record of sortedRecords) {
+      extractEntitiesFromRecord(record, entityMap);
+    }
+
+    const people: ExtractedEntity[] = [];
+    for (const item of entityMap.values()) {
+      if (item.type === 'person') {
+        people.push(item);
+      }
+    }
+
+    const sorter = (a: ExtractedEntity, b: ExtractedEntity) =>
+      b.memoryIds.length - a.memoryIds.length || a.name.localeCompare(b.name);
+    people.sort(sorter);
+
+    return { people };
+  }, [sortedRecords]);
+
   const filteredRecords = useMemo(() => {
-    if (selectedEmotion === 'All') return sortedRecords;
-    return sortedRecords.filter((record) => normalizeValue(record.emotion) === selectedEmotion);
-  }, [selectedEmotion, sortedRecords]);
+    const emotionFiltered =
+      selectedEmotion === 'All'
+        ? sortedRecords
+        : sortedRecords.filter((record) => normalizeValue(record.emotion) === selectedEmotion);
+
+    if (!activeEntity) return emotionFiltered;
+
+    const target = activeEntity.name.toLowerCase();
+    return emotionFiltered.filter((record) => {
+      const source = `${normalizeValue(record.object)}\n${normalizeValue(record.description)}\n${normalizeValue(record.location)}`;
+      return source.toLowerCase().includes(target);
+    });
+  }, [selectedEmotion, sortedRecords, activeEntity]);
 
   const displayRecords = useMemo<DisplayMemoryRecord[]>(() => {
-    return filteredRecords.map((record) => {
-      const keyText = normalizeValue(record.object || record.id);
-      const createdSource = record.createdAt || record.time;
-      const shortTimeText = formatShortTime(record.time || record.createdAt);
-      const emotion = normalizeValue(record.emotion);
-      const emotionStyle = getEmotionStyle(emotion);
-
-      return {
-        keyText,
-        shortTimeText,
-        createdTimeText: formatCreatedTime(createdSource),
-        category: normalizeValue(record.category),
-        object: normalizeValue(record.object || record.id),
-        emotion,
-        visibility: normalizeValue(record.visibility || record.location),
-        description: normalizeValue(record.description),
-        details: normalizeValue(record.details),
-        color: emotionStyle.color,
-        glow: emotionStyle.glow,
-      };
-    });
+    return filteredRecords.map((record) => toDisplayMemoryRecord(record));
   }, [filteredRecords]);
+
+  const activePersonEntity = useMemo(() => {
+    if (!activeEntity) return null;
+    return entitySummary.people.find((item) => item.name.toLowerCase() === activeEntity.name.toLowerCase()) ?? null;
+  }, [activeEntity, entitySummary]);
+
+  const activePersonRecords = useMemo(() => {
+    if (!activePersonEntity) return [];
+    const idSet = new Set(activePersonEntity.memoryIds);
+    return sortedRecords.filter((record) => idSet.has(record.id));
+  }, [activePersonEntity, sortedRecords]);
+
+  const activePersonSequenceIds = useMemo(() => {
+    return [...activePersonRecords]
+      .sort((a, b) => getTimestamp(a) - getTimestamp(b))
+      .map((record) => record.id);
+  }, [activePersonRecords]);
 
   useEffect(() => {
     if (!selectedRecord) return;
@@ -399,6 +564,64 @@ export default function MemoryPreviewCanvas() {
       setSelectedRecord(null);
     }
   }, [selectedEmotion, selectedRecord]);
+
+  useEffect(() => {
+    if (!activeEntity) return;
+    const currentSet = new Set(entitySummary.people.map((item) => item.name.toLowerCase()));
+    if (!currentSet.has(activeEntity.name.toLowerCase())) {
+      setActiveEntity(null);
+    }
+  }, [activeEntity, entitySummary]);
+
+  useEffect(() => {
+    if (activeEntity) setPersonListOpen(true);
+  }, [activeEntity]);
+
+  useEffect(() => {
+    if (!activeEntity || activePersonRecords.length === 0) {
+      setPersonNarrativeText(null);
+      setPersonNarrativeKeyIdMap({});
+      return;
+    }
+
+    const memories = [...activePersonRecords]
+      .sort((a, b) => getTimestamp(a) - getTimestamp(b))
+      .slice(-12)
+      .map((record) => ({
+        id: record.id,
+        key: normalizeValue(record.object || record.id),
+        description: normalizeValue(record.description),
+        details: normalizeValue(record.details),
+        createdAt: record.createdAt || record.time,
+      }));
+
+    let cancelled = false;
+    setPersonNarrativeLoading(true);
+
+    fetch('/api/narrative-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memories }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.narrative) {
+          setPersonNarrativeText(data.narrative);
+          setPersonNarrativeKeyIdMap(data.keyIdMap || {});
+        }
+      })
+      .catch((err) => {
+        console.error('[person-narrative] fetch error:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setPersonNarrativeLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeEntity, activePersonRecords]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -695,25 +918,7 @@ export default function MemoryPreviewCanvas() {
     if (!record) return;
 
     // 更新选中的记忆
-    const keyText = normalizeValue(record.object || record.id);
-    const createdSource = record.createdAt || record.time;
-    const shortTimeText = formatShortTime(record.time || record.createdAt);
-    const emotion = normalizeValue(record.emotion);
-    const emotionStyle = getEmotionStyle(emotion);
-
-    setSelectedRecord({
-      keyText,
-      shortTimeText,
-      createdTimeText: formatCreatedTime(createdSource),
-      category: normalizeValue(record.category),
-      object: normalizeValue(record.object || record.id),
-      emotion,
-      visibility: normalizeValue(record.visibility || record.location),
-      description: normalizeValue(record.description),
-      details: normalizeValue(record.details),
-      color: emotionStyle.color,
-      glow: emotionStyle.glow,
-    });
+    setSelectedRecord(toDisplayMemoryRecord(record));
 
     setConstellationFocusActive(true);
     setNarrativeMemoryId(nodeId);
@@ -723,7 +928,7 @@ export default function MemoryPreviewCanvas() {
     setDetachedDetailPosition(null);
   }, [sortedRecords]);
 
-  const handleConstellationMemoryClick = useCallback((memoryId: string, _anchor?: { clientX: number; clientY: number }) => {
+  const handleConstellationMemoryClick = useCallback((memoryId: string) => {
     const record = sortedRecords.find(r => r.id === memoryId);
     if (!record) return;
 
@@ -741,29 +946,25 @@ export default function MemoryPreviewCanvas() {
     const record = sortedRecords.find(r => r.id === memId);
     if (!record) return;
 
-    const keyText = normalizeValue(record.object || record.id);
-    const createdSource = record.createdAt || record.time;
-    const emotion = normalizeValue(record.emotion);
-    const emotionStyle = getEmotionStyle(emotion);
-
-    setSelectedRecord({
-      keyText,
-      shortTimeText: formatShortTime(record.time || record.createdAt),
-      createdTimeText: formatCreatedTime(createdSource),
-      category: normalizeValue(record.category),
-      object: normalizeValue(record.object || record.id),
-      emotion,
-      visibility: normalizeValue(record.visibility || record.location),
-      description: normalizeValue(record.description),
-      details: normalizeValue(record.details),
-      color: emotionStyle.color,
-      glow: emotionStyle.glow,
-    });
+    setSelectedRecord(toDisplayMemoryRecord(record));
     setShowDetails(false);
     setShowMetaMenu(false);
     setIsDetailDetached(false);
     setDetachedDetailPosition(null);
   }, [sortedRecords]);
+
+  const handlePersonMemoryClick = useCallback((memoryId: string) => {
+    const record = sortedRecords.find((r) => r.id === memoryId);
+    if (!record) return;
+    setSelectedRecord(toDisplayMemoryRecord(record));
+    setNarrativeMemoryId(memoryId);
+    setConstellationFocusActive(true);
+    setDetailSource(viewMode === 'constellation' ? 'constellation' : 'stream');
+    setShowDetails(false);
+    setShowMetaMenu(false);
+    setIsDetailDetached(false);
+    setDetachedDetailPosition(null);
+  }, [sortedRecords, viewMode]);
 
   const handleCopyNarrative = useCallback(() => {
     if (!narrativeContext) return;
@@ -852,6 +1053,16 @@ export default function MemoryPreviewCanvas() {
     viewMode === 'constellation' && !!narrativeMemoryId && detailSource === 'constellation';
   const showConstellationDetail = showNarrativeOverlay && !!selectedRecord;
   const showStreamDetail = selectedRecord && detailSource === 'stream';
+
+  const constellationHighlightedMemoryIds = useMemo(() => {
+    if (showNarrativeOverlay && constellationFocusActive) return narrativeContext?.listedIds ?? [];
+    return activePersonEntity?.memoryIds ?? [];
+  }, [showNarrativeOverlay, constellationFocusActive, narrativeContext, activePersonEntity]);
+
+  const constellationSequenceMemoryIds = useMemo(() => {
+    if (showNarrativeOverlay && constellationFocusActive) return narrativeContext?.primarySequenceIds ?? [];
+    return activePersonSequenceIds;
+  }, [showNarrativeOverlay, constellationFocusActive, narrativeContext, activePersonSequenceIds]);
 
   const constellationDetailStyle = useMemo(() => {
     if (!showConstellationDetail || !constellationMainRef.current) return undefined;
@@ -1021,9 +1232,57 @@ export default function MemoryPreviewCanvas() {
               </button>
             </div>
             <span>
-              {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions
+              {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions · {entitySummary.people.length} people
             </span>
           </div>
+          <div className="memory-entity-strip">
+            <div className="memory-entity-group">
+              <strong>People</strong>
+              {entitySummary.people.slice(0, 32).map((entity) => {
+                const isActive =
+                  activeEntity?.type === 'person' && activeEntity.name.toLowerCase() === entity.name.toLowerCase();
+                return (
+                  <button
+                    key={`person-${entity.name}`}
+                    className={`memory-entity-chip memory-entity-chip-person ${isActive ? 'active' : ''}`}
+                    onClick={() => {
+                      setActiveEntity(isActive ? null : { name: entity.name, type: 'person' });
+                    }}
+                    title={`Memories: ${entity.memoryIds.length}`}
+                  >
+                    {entity.name} ({entity.memoryIds.length})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {activeEntity && (
+            <div className="memory-person-panel">
+              <div className="memory-person-panel-header">
+                <h3>{activeEntity.name}</h3>
+                <div>
+                  <span>{activePersonRecords.length} memories</span>
+                  <button onClick={() => setPersonListOpen((v) => !v)}>
+                    {personListOpen ? 'Hide list' : 'Show list'}
+                  </button>
+                </div>
+              </div>
+              {personListOpen && (
+                <div className="memory-person-list">
+                  {activePersonRecords.slice(0, 40).map((record) => (
+                    <button
+                      key={`person-memory-${record.id}`}
+                      className="memory-person-list-item"
+                      onClick={() => handlePersonMemoryClick(record.id)}
+                    >
+                      <strong>{normalizeValue(record.object || record.id)}</strong>
+                      <span>{formatShortTime(record.time || record.createdAt)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {viewMode === 'stream' && (
             <div className="memory-emotion-tags">
               <button
@@ -1062,12 +1321,8 @@ export default function MemoryPreviewCanvas() {
                 onClearFocus={clearConstellationFocus}
                 focusMemoryId={showNarrativeOverlay ? narrativeMemoryId : null}
                 onFocusAnchorChange={handleConstellationFocusAnchorChange}
-                highlightedMemoryIds={
-                  showNarrativeOverlay && constellationFocusActive ? (narrativeContext?.listedIds ?? []) : []
-                }
-                sequenceMemoryIds={
-                  showNarrativeOverlay && constellationFocusActive ? (narrativeContext?.primarySequenceIds ?? []) : []
-                }
+                highlightedMemoryIds={constellationHighlightedMemoryIds}
+                sequenceMemoryIds={constellationSequenceMemoryIds}
               />
             )
           )}
@@ -1108,40 +1363,29 @@ export default function MemoryPreviewCanvas() {
                 <div
                   className="narrative-text-body"
                   dangerouslySetInnerHTML={{
-                    __html: (() => {
-                      // Strip any residual markdown bold/quote formatting from LLM
-                      let raw = (narrativeText ?? '')
-                        .replace(/\*\*(.+?)\*\*/g, '$1')
-                        .replace(/\n\n+/g, '\n\n');
-
-                      // Build combined regex from all keys (longest first, case-insensitive)
-                      const entries = Object.entries(narrativeKeyIdMap)
-                        .filter(([k]) => k.length >= 2)
-                        .sort((a, b) => b[0].length - a[0].length);
-
-                      if (entries.length === 0) {
-                        return raw.replace(/\n\n/g, '<br/><br/>');
-                      }
-
-                      const escapedKeys = entries.map(([k]) =>
-                        k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-                      );
-                      const combined = new RegExp(`(${escapedKeys.join('|')})`, 'gi');
-
-                      // Single-pass replace: wrap every key occurrence in a clickable span
-                      // Build a lowercase lookup for id resolution
-                      const lowerMap = new Map(entries.map(([k, id]) => [k.toLowerCase(), id]));
-
-                      const html = raw.replace(combined, (match) => {
-                        const id = lowerMap.get(match.toLowerCase());
-                        if (id) {
-                          return `<span class="narrative-key narrative-key-link" data-mem-id="${id}">${match}</span>`;
-                        }
-                        return match;
-                      });
-
-                      return html.replace(/\n\n/g, '<br/><br/>');
-                    })()
+                    __html: buildNarrativeHtml(narrativeText ?? '', narrativeKeyIdMap)
+                  }}
+                />
+              )}
+            </div>
+          )}
+          {viewMode === 'constellation' && activeEntity && (personNarrativeLoading || personNarrativeText) && (
+            <div
+              className="narrative-text-floating person-narrative-floating"
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                const memId = target.dataset?.memId;
+                if (memId) handlePersonMemoryClick(memId);
+              }}
+            >
+              <div className="person-narrative-title">Narrative for {activeEntity.name}</div>
+              {personNarrativeLoading ? (
+                <div className="narrative-text-loading">Generating narrative...</div>
+              ) : (
+                <div
+                  className="narrative-text-body"
+                  dangerouslySetInnerHTML={{
+                    __html: buildNarrativeHtml(personNarrativeText ?? '', personNarrativeKeyIdMap),
                   }}
                 />
               )}
