@@ -1465,7 +1465,9 @@ function ClusterGraph({
         const accentR = Math.round((nr * 0.9 + 0.1) * 255);
         const accentG = Math.round((ng * 0.9 + 0.1) * 255);
         const accentB = Math.round((nb * 0.9 + 0.1) * 255);
-        const textColor = variant === 'hover' ? '#f6fbff' : '#e4f0ff';
+        const textColor = variant === 'hover'
+          ? 'rgba(226,236,246,0.86)'
+          : 'rgba(212,224,238,0.74)';
 
         ctx.save();
         ctx.font = `${variant === 'hover' ? 620 : 560} ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
@@ -1474,17 +1476,17 @@ function ClusterGraph({
 
         const grad = ctx.createLinearGradient(cx, by, cx, by + bh);
         if (variant === 'hover') {
-          grad.addColorStop(0, 'rgba(14,23,42,0.94)');
-          grad.addColorStop(1, 'rgba(8,14,28,0.9)');
+          grad.addColorStop(0, 'rgba(10,17,30,0.62)');
+          grad.addColorStop(1, 'rgba(8,14,28,0.36)');
         } else {
-          grad.addColorStop(0, 'rgba(13,20,36,0.84)');
-          grad.addColorStop(1, 'rgba(8,13,25,0.78)');
+          grad.addColorStop(0, 'rgba(10,16,28,0.46)');
+          grad.addColorStop(1, 'rgba(8,13,25,0.2)');
         }
 
-        ctx.shadowBlur = (variant === 'hover' ? 12 : 8) * invS;
+        ctx.shadowBlur = (variant === 'hover' ? 8 : 5) * invS;
         ctx.shadowColor = variant === 'hover'
-          ? `rgba(${accentR},${accentG},${accentB},0.22)`
-          : 'rgba(10,14,24,0.24)';
+          ? `rgba(${accentR},${accentG},${accentB},0.16)`
+          : 'rgba(10,14,24,0.14)';
         ctx.fillStyle = grad;
         roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
         ctx.fill();
@@ -1492,29 +1494,23 @@ function ClusterGraph({
         // Subtle top highlight for "glass" look.
         ctx.shadowBlur = 0;
         const hi = ctx.createLinearGradient(cx, by, cx, by + bh * 0.6);
-        hi.addColorStop(0, 'rgba(255,255,255,0.16)');
+        hi.addColorStop(0, 'rgba(255,255,255,0.07)');
         hi.addColorStop(1, 'rgba(255,255,255,0)');
         ctx.fillStyle = hi;
         roundedRectPath(ctx, cx - bw / 2 + 0.2 * invS, by + 0.2 * invS, bw - 0.4 * invS, bh * 0.58, radius * 0.84);
         ctx.fill();
 
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = variant === 'hover'
-          ? `rgba(${accentR},${accentG},${accentB},0.52)`
-          : `rgba(${accentR},${accentG},${accentB},0.34)`;
-        ctx.lineWidth = Math.max((variant === 'hover' ? 0.95 : 0.78) * invS, 0.72 / cam.scale);
-        roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
-        ctx.stroke();
 
         const chipX = cx - bw / 2 + px + chipR;
         const textX = chipX + chipR + chipGap + (tw / 2);
         const textY = by + bh / 2 + 0.2 * invS;
 
-        ctx.shadowBlur = 6 * invS;
-        ctx.shadowColor = `rgba(${accentR},${accentG},${accentB},0.5)`;
+        ctx.shadowBlur = 4 * invS;
+        ctx.shadowColor = `rgba(${accentR},${accentG},${accentB},0.34)`;
         ctx.beginPath();
         ctx.arc(chipX, by + bh / 2, chipR, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${accentR},${accentG},${accentB},0.92)`;
+        ctx.fillStyle = `rgba(${accentR},${accentG},${accentB},0.7)`;
         ctx.fill();
 
         ctx.shadowBlur = 0;
@@ -2045,9 +2041,9 @@ function ClusterGraph({
           ctx.font = `${hovered ? 640 : 600} ${fontSize}px "Avenir Next", "Segoe UI", sans-serif`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.shadowBlur = (hovered ? 11 : 7) * invS;
+          ctx.shadowBlur = (hovered ? 8 : 5) * invS;
           ctx.shadowColor = node.glow;
-          ctx.fillStyle = '#eaf5ff';
+          ctx.fillStyle = 'rgba(222,234,246,0.78)';
           ctx.fillText(node.label, node.x, node.y - yOff);
           ctx.shadowBlur = 0;
           ctx.restore();
@@ -2070,19 +2066,14 @@ function ClusterGraph({
           const cx = Math.max(worldLeft + bw / 2 + 4 * invS, Math.min(worldRight - bw / 2 - 4 * invS, label.x));
           const cy = Math.max(worldTop + bh / 2 + 4 * invS, Math.min(worldBottom - bh / 2 - 4 * invS, label.y));
 
-          ctx.shadowBlur = 8 * invS;
-          ctx.shadowColor = 'rgba(10,16,28,0.48)';
-          ctx.fillStyle = 'rgba(8,14,26,0.86)';
+          ctx.shadowBlur = 4 * invS;
+          ctx.shadowColor = 'rgba(10,16,28,0.24)';
+          ctx.fillStyle = 'rgba(8,14,26,0.44)';
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
           ctx.fill();
 
           ctx.shadowBlur = 0;
-          ctx.strokeStyle = 'rgba(205,223,246,0.4)';
-          ctx.lineWidth = Math.max(0.78 * invS, 0.75 / cam.scale);
-          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
-          ctx.stroke();
-
-          ctx.fillStyle = label.color;
+          ctx.fillStyle = 'rgba(205,223,246,0.7)';
           ctx.fillText(label.text, cx, cy + 0.2 * invS);
           ctx.restore();
         }
@@ -2113,15 +2104,11 @@ function ClusterGraph({
           const bh = fs + py * 2;
           const cx = item.x;
           const cy = item.y - 10 * invS - bh * 0.5;
-          ctx.fillStyle = 'rgba(7, 17, 29, 0.92)';
+          ctx.fillStyle = 'rgba(7, 17, 29, 0.5)';
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
           ctx.fill();
           const isTeal = item.color.includes('234, 212');
-          ctx.strokeStyle = isTeal ? 'rgba(94, 234, 212, 0.48)' : 'rgba(160, 170, 180, 0.22)';
-          ctx.lineWidth = Math.max(0.8 * invS, 0.75 / cam.scale);
-          roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
-          ctx.stroke();
-          ctx.fillStyle = item.color;
+          ctx.fillStyle = isTeal ? 'rgba(168, 238, 227, 0.9)' : 'rgba(198, 208, 220, 0.62)';
           ctx.fillText(text, cx, cy + 0.2 * invS);
           ctx.restore();
         }
