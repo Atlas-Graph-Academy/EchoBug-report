@@ -7,6 +7,7 @@ import {
   forceManyBody,
   forceCenter,
   forceCollide,
+  forceX,
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from 'd3-force';
@@ -399,6 +400,7 @@ function ClusterGraph({
   const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
   const [clusterLinks, setClusterLinks] = useState<ClusterLink[]>([]);
   const [expandedCluster, setExpandedCluster] = useState<number | null>(null);
+  const [viewportWidth, setViewportWidth] = useState<number>(0);
 
   useEffect(() => {
     expandedClusterRef.current = expandedCluster;
@@ -693,6 +695,51 @@ function ClusterGraph({
     applyLabelsToSim(labelMap);
   }, [memById, applyLabelsToSim]);
 
+  // ── Narrative left-to-right layout targets ──
+  const narrativeLayout = useMemo(() => {
+    if (sequenceMemoryIds.length < 2 || clusterNodes.length === 0 || viewportWidth === 0) return null;
+
+    // Map each sequence memory to its parent cluster
+    const memToCluster = new Map<string, number>();
+    for (const cluster of clusterNodes) {
+      for (const memId of cluster.memberIds) {
+        memToCluster.set(memId, cluster.id);
+      }
+    }
+
+    // Compute average sequence index for each cluster
+    const clusterRankSum = new Map<number, number>();
+    const clusterRankCount = new Map<number, number>();
+    for (let i = 0; i < sequenceMemoryIds.length; i++) {
+      const clusterId = memToCluster.get(sequenceMemoryIds[i]);
+      if (clusterId == null) continue;
+      clusterRankSum.set(clusterId, (clusterRankSum.get(clusterId) ?? 0) + i);
+      clusterRankCount.set(clusterId, (clusterRankCount.get(clusterId) ?? 0) + 1);
+    }
+
+    if (clusterRankSum.size < 2) return null;
+
+    // Sort clusters by average rank
+    const sorted = Array.from(clusterRankSum.entries())
+      .map(([id, sum]) => ({ id, avgRank: sum / clusterRankCount.get(id)! }))
+      .sort((a, b) => a.avgRank - b.avgRank);
+
+    // Assign evenly-spaced target x-positions with 15% padding on each side
+    const padLeft = viewportWidth * 0.15;
+    const padRight = viewportWidth * 0.15;
+    const usable = viewportWidth - padLeft - padRight;
+    const step = sorted.length > 1 ? usable / (sorted.length - 1) : 0;
+
+    const targetX = new Map<number, number>();
+    const narrativeClusterIds = new Set<number>();
+    for (let i = 0; i < sorted.length; i++) {
+      targetX.set(sorted[i].id, padLeft + step * i);
+      narrativeClusterIds.add(sorted[i].id);
+    }
+
+    return { targetX, narrativeClusterIds };
+  }, [sequenceMemoryIds, clusterNodes, viewportWidth]);
+
   // ── Main force simulation ──
   useEffect(() => {
     if (clusterNodes.length === 0) return;
@@ -700,6 +747,7 @@ function ClusterGraph({
     if (!container) return;
     const w = container.clientWidth;
     const h = container.clientHeight;
+    setViewportWidth(w);
 
     const simNodes = clusterNodes.map((n) => ({ ...n }));
     simNodesRef.current = simNodes;
@@ -776,6 +824,26 @@ function ClusterGraph({
     });
     return () => { sim.stop(); simRef.current = null; };
   }, [clusterNodes.length, clusterLinks.length, markWebGLDirty]);
+
+  // ── Apply/remove narrative left-to-right force ──
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!sim) return;
+
+    if (narrativeLayout) {
+      const { targetX, narrativeClusterIds } = narrativeLayout;
+      sim.force('narrativeX', forceX<ClusterNode>()
+        .x((d) => targetX.get(d.id) ?? d.x ?? 0)
+        .strength((d) => narrativeClusterIds.has(d.id) ? 0.12 : 0)
+      );
+      sim.alpha(0.35).restart();
+    } else {
+      if (sim.force('narrativeX')) {
+        sim.force('narrativeX', null);
+        sim.alpha(0.2).restart();
+      }
+    }
+  }, [narrativeLayout]);
 
   // ── Expand cluster ──
   const expandCluster = useCallback((clusterId: number) => {
@@ -2110,8 +2178,9 @@ function ClusterGraph({
     const container = containerRef.current;
     if (!container) return;
     const obs = new ResizeObserver(() => {
+      const w = container.clientWidth; const h = container.clientHeight;
+      setViewportWidth(w);
       if (simRef.current) {
-        const w = container.clientWidth; const h = container.clientHeight;
         simRef.current.force('center', forceCenter(w / 2, h / 2));
         simRef.current.alpha(0.3).restart();
       }
