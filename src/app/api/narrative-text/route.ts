@@ -21,10 +21,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'API key not configured' }, { status: 500 });
     }
 
-    // Build key→id lookup for post-processing (longest keys first to avoid partial matches)
-    const keyToId = new Map<string, string>();
+    // Build key→id mapping to return alongside narrative
+    const keyIdMap: Record<string, string> = {};
     for (const m of memories) {
-      if (m.key && m.id) keyToId.set(m.key, m.id);
+      if (m.key && m.id) keyIdMap[m.key] = m.id;
     }
 
     const memoryDescriptions = memories
@@ -43,7 +43,8 @@ export async function POST(request: Request) {
 
 规则：
 - 每句话要短，像说话一样自然
-- 把每条记忆的 key（用 **加粗** 标记）自然地嵌入句子中
+- 必须把每条记忆的 key 原封不动地嵌入到句子中（不要改写、缩写或翻译 key，保持原文）
+- 不要用任何特殊格式（不要加粗、不要引号、不要括号包裹 key）
 - 不要用日期开头，不要列表，写成一整段流畅的文字
 - 捕捉情绪变化和内在联系
 - 总字数控制在 150-300 字
@@ -78,19 +79,9 @@ ${memoryDescriptions}`,
     }
 
     const data = await resp.json();
-    let narrative = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const narrative = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Post-process: inject [memId:ID] into **key** markers
-    // Sort keys longest-first so "Echo Introduction" matches before "Echo"
-    const sortedKeys = Array.from(keyToId.entries()).sort((a, b) => b[0].length - a[0].length);
-    for (const [key, id] of sortedKeys) {
-      // Match **...key...** patterns and inject memId
-      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = new RegExp(`\\*\\*([^*]*?${escaped}[^*]*?)\\*\\*`, 'g');
-      narrative = narrative.replace(pattern, `**[memId:${id}]$1**`);
-    }
-
-    return NextResponse.json({ narrative: narrative.trim() });
+    return NextResponse.json({ narrative: narrative.trim(), keyIdMap });
   } catch (err) {
     console.error('[narrative-text] error:', err);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });

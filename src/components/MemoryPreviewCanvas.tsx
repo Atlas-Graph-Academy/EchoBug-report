@@ -280,6 +280,7 @@ export default function MemoryPreviewCanvas() {
   const [isDetailDetached, setIsDetailDetached] = useState(false);
   const [detachedDetailPosition, setDetachedDetailPosition] = useState<{ left: number; top: number } | null>(null);
   const [narrativeText, setNarrativeText] = useState<string | null>(null);
+  const [narrativeKeyIdMap, setNarrativeKeyIdMap] = useState<Record<string, string>>({});
   const [narrativeLoading, setNarrativeLoading] = useState(false);
   const [narrativeGraphOpen, setNarrativeGraphOpen] = useState(false);
 
@@ -645,6 +646,7 @@ export default function MemoryPreviewCanvas() {
       .then(data => {
         if (!cancelled && data.narrative) {
           setNarrativeText(data.narrative);
+          setNarrativeKeyIdMap(data.keyIdMap || {});
         }
       })
       .catch(err => {
@@ -1106,11 +1108,40 @@ export default function MemoryPreviewCanvas() {
                 <div
                   className="narrative-text-body"
                   dangerouslySetInnerHTML={{
-                    __html: (narrativeText ?? '')
-                      .replace(/\*\*\[memId:([^\]]+)\](.+?)\*\*/g, '<span class="narrative-key narrative-key-link" data-mem-id="$1">$2</span>')
-                      .replace(/\*\*(.+?)\*\*/g, '<strong class="narrative-key">$1</strong>')
-                      .replace(/\[memId:([^\]]+)\](\S+)/g, '<span class="narrative-key narrative-key-link" data-mem-id="$1">$2</span>')
-                      .replace(/\n\n+/g, '<br/><br/>')
+                    __html: (() => {
+                      // Strip any residual markdown bold/quote formatting from LLM
+                      let raw = (narrativeText ?? '')
+                        .replace(/\*\*(.+?)\*\*/g, '$1')
+                        .replace(/\n\n+/g, '\n\n');
+
+                      // Build combined regex from all keys (longest first, case-insensitive)
+                      const entries = Object.entries(narrativeKeyIdMap)
+                        .filter(([k]) => k.length >= 2)
+                        .sort((a, b) => b[0].length - a[0].length);
+
+                      if (entries.length === 0) {
+                        return raw.replace(/\n\n/g, '<br/><br/>');
+                      }
+
+                      const escapedKeys = entries.map(([k]) =>
+                        k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                      );
+                      const combined = new RegExp(`(${escapedKeys.join('|')})`, 'gi');
+
+                      // Single-pass replace: wrap every key occurrence in a clickable span
+                      // Build a lowercase lookup for id resolution
+                      const lowerMap = new Map(entries.map(([k, id]) => [k.toLowerCase(), id]));
+
+                      const html = raw.replace(combined, (match) => {
+                        const id = lowerMap.get(match.toLowerCase());
+                        if (id) {
+                          return `<span class="narrative-key narrative-key-link" data-mem-id="${id}">${match}</span>`;
+                        }
+                        return match;
+                      });
+
+                      return html.replace(/\n\n/g, '<br/><br/>');
+                    })()
                   }}
                 />
               )}
