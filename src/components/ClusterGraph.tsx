@@ -2460,9 +2460,9 @@ function ClusterGraph({
   }, []);
 
   useEffect(() => {
-    // Prioritize the primary sequence path for camera fit so the teal narrative
-    // chain occupies most of the viewport instead of being diluted by side chains.
-    const preferredIds = sequenceMemoryIds.length > 0 ? sequenceMemoryIds : highlightedMemoryIds;
+    // In narrative focus mode, prefer fitting all selected narrative nodes.
+    // This keeps side-chain context visible instead of fitting only the spine.
+    const preferredIds = highlightedMemoryIds.length > 0 ? highlightedMemoryIds : sequenceMemoryIds;
     const focusIds = Array.from(new Set(preferredIds));
     if (focusIds.length === 0) return;
 
@@ -2497,12 +2497,23 @@ function ClusterGraph({
         if (p.y > maxY) maxY = p.y;
       }
 
+      // Add a small world-space padding so outer nodes don't clip at the edge.
+      const worldPad = Math.max(20, Math.max(maxX - minX, maxY - minY) * 0.08);
+      minX -= worldPad;
+      maxX += worldPad;
+      minY -= worldPad;
+      maxY += worldPad;
+
       const spanX = Math.max(1, maxX - minX);
       const spanY = Math.max(1, maxY - minY);
       // Keep a thin on-screen margin while maximizing occupied area for readability.
       const marginX = Math.max(28, vw * 0.06);
       const marginY = Math.max(24, vh * 0.1);
-      const fitW = Math.max(1, vw - marginX * 2);
+      // Reserve a left strip for the narrative text panel so graph focus sits naturally on the right.
+      const reservedLeft = clamp(vw * 0.35, 360, 700);
+      const fitLeft = Math.min(vw - marginX - 180, reservedLeft + marginX * 0.4);
+      const fitRight = vw - marginX;
+      const fitW = Math.max(1, fitRight - fitLeft);
       const fitH = Math.max(1, vh - marginY * 2);
       const targetScaleRaw = Math.min(fitW / spanX, fitH / spanY);
       const currentScale = cameraRef.current.scale;
@@ -2514,7 +2525,7 @@ function ClusterGraph({
       const cx = (minX + maxX) * 0.5;
       const cy = (minY + maxY) * 0.5;
       animateCamera({
-        x: vw / 2 - cx * targetScale,
+        x: fitLeft + fitW * 0.5 - cx * targetScale,
         y: vh / 2 - cy * targetScale,
         scale: targetScale,
       }, 420);

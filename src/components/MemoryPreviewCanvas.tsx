@@ -358,7 +358,11 @@ function buildNarrativeHtml(rawText: string, keyIdMap: Record<string, string>): 
 
   const html = raw.replace(combined, (match) => {
     const id = lowerMap.get(match.toLowerCase());
-    if (id) return `<span class="narrative-key narrative-key-link" data-mem-id="${id}">${match}</span>`;
+    if (id) {
+      const seed = hashEmotion(`${id}:${match.toLowerCase()}`);
+      const tagClass = seed % 2 === 0 ? 'memory-tag-public' : 'memory-tag-travel';
+      return `<span class="narrative-key narrative-key-link ${tagClass}" data-mem-id="${id}">${match}</span>`;
+    }
     return match;
   });
 
