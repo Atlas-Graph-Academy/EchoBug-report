@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import type { MemoryNode } from '@/lib/narrative';
 
 type NodeWithSimilarity = MemoryNode & { similarity?: number };
@@ -38,6 +38,7 @@ interface NarrativeGraphProps {
     surprise?: NodeWithSimilarity;
   };
   onNodeClick: (nodeId: string) => void;
+  onCopyAll?: () => void;
   resizable?: boolean;
 }
 
@@ -653,12 +654,14 @@ export default function NarrativeGraph({
   currentMemory,
   chains,
   onNodeClick,
+  onCopyAll,
   resizable = false,
 }: NarrativeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] }>({ nodes: [], edges: [] });
   const hoveredRef = useRef<string | null>(null);
+  const [copyToast, setCopyToast] = useState(false);
 
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -782,6 +785,13 @@ export default function NarrativeGraph({
     window.addEventListener('mouseup', onUp);
   }, [resizable]);
 
+  const handleCopy = useCallback(() => {
+    if (!onCopyAll) return;
+    onCopyAll();
+    setCopyToast(true);
+    setTimeout(() => setCopyToast(false), 1800);
+  }, [onCopyAll]);
+
   return (
     <div
       ref={containerRef}
@@ -793,6 +803,15 @@ export default function NarrativeGraph({
         onMouseMove={handleMouseMove}
         onClick={handleClick}
       />
+      {onCopyAll && (
+        <button
+          className="narrative-graph-copy-btn"
+          onClick={handleCopy}
+          title="Copy all narrative nodes to clipboard"
+        >
+          {copyToast ? 'Copied!' : 'Copy All'}
+        </button>
+      )}
       {resizable && (
         <>
           <div

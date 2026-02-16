@@ -754,6 +754,65 @@ export default function MemoryPreviewCanvas() {
     }
   }, [sortedRecords]);
 
+  const handleCopyNarrative = useCallback(() => {
+    if (!narrativeContext) return;
+
+    const recordMap = new Map(sortedRecords.map(r => [r.id, r]));
+
+    const formatNode = (node: MemoryNode, label: string) => {
+      const rec = recordMap.get(node.id);
+      const lines = [`[${label}] ${node.object || node.key}`];
+      lines.push(`  Time: ${node.createdAt}`);
+      lines.push(`  Emotion: ${node.emotion} | Category: ${node.category}`);
+      if (rec?.description) lines.push(`  Description: ${rec.description}`);
+      if (rec?.details) lines.push(`  Details: ${rec.details}`);
+      return lines.join('\n');
+    };
+
+    const sections: string[] = [];
+
+    // Primary spine
+    const spine = [
+      ...narrativeContext.chains.upstream,
+      narrativeContext.currentMemory,
+      ...narrativeContext.chains.downstream,
+    ].sort((a, b) => {
+      const ta = new Date(a.createdAt).getTime();
+      const tb = new Date(b.createdAt).getTime();
+      return (Number.isNaN(ta) ? 0 : ta) - (Number.isNaN(tb) ? 0 : tb);
+    });
+
+    sections.push('=== NARRATIVE SPINE ===');
+    for (const node of spine) {
+      const isCurrent = node.id === narrativeContext.currentMemory.id;
+      sections.push(formatNode(node, isCurrent ? 'CURRENT' : 'SPINE'));
+    }
+
+    // Object chain
+    if (narrativeContext.chains.objectChain.length > 0) {
+      sections.push('\n=== OBJECT CHAIN ===');
+      for (const node of narrativeContext.chains.objectChain) {
+        sections.push(formatNode(node, 'OBJECT'));
+      }
+    }
+
+    // Category chain
+    if (narrativeContext.chains.categoryChain.length > 0) {
+      sections.push('\n=== CATEGORY CHAIN ===');
+      for (const node of narrativeContext.chains.categoryChain) {
+        sections.push(formatNode(node, 'CATEGORY'));
+      }
+    }
+
+    // Surprise
+    if (narrativeContext.chains.surprise) {
+      sections.push('\n=== SURPRISE ===');
+      sections.push(formatNode(narrativeContext.chains.surprise, 'SURPRISE'));
+    }
+
+    navigator.clipboard.writeText(sections.join('\n'));
+  }, [narrativeContext, sortedRecords]);
+
   const closeDetail = useCallback(() => {
     setSelectedRecord(null);
     setNarrativeMemoryId(null);
@@ -875,6 +934,7 @@ export default function MemoryPreviewCanvas() {
           currentMemory={narrativeContext.currentMemory}
           chains={narrativeContext.chains}
           onNodeClick={handleNarrativeNodeClick}
+          onCopyAll={handleCopyNarrative}
         />
       )}
       <section className="memory-detail-section">
@@ -996,6 +1056,7 @@ export default function MemoryPreviewCanvas() {
                 currentMemory={narrativeContext.currentMemory}
                 chains={narrativeContext.chains}
                 onNodeClick={handleNarrativeNodeClick}
+                onCopyAll={handleCopyNarrative}
                 resizable
               />
             </div>
