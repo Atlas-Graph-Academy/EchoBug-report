@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 interface NarrativeMemory {
+  id: string;
   key: string;
   description: string;
   details: string;
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
     const memoryDescriptions = memories
       .map(
         (m, i) =>
-          `${i + 1}. [${m.createdAt}] "${m.key}": ${m.description}${m.details ? ` — ${m.details}` : ''}`
+          `${i + 1}. [${m.createdAt}] id="${m.id}" key="${m.key}": ${m.description}${m.details ? ` — ${m.details}` : ''}`
       )
       .join('\n');
 
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
 
 规则：
 - 每句话要短，像说话一样自然
-- 把每条记忆的 key（用 **加粗** 标记）自然地嵌入句子中
+- 把每条记忆的 key 自然地嵌入句子中，格式必须是 **[memId:对应的id]key文字**，例如 **[memId:abc123]咖啡**
 - 不要用日期开头，不要列表，写成一整段流畅的文字
 - 捕捉情绪变化和内在联系
 - 总字数控制在 150-300 字

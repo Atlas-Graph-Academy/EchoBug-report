@@ -281,6 +281,12 @@ export default function MemoryPreviewCanvas() {
   const [detachedDetailPosition, setDetachedDetailPosition] = useState<{ left: number; top: number } | null>(null);
   const [narrativeText, setNarrativeText] = useState<string | null>(null);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
+  const [narrativeGraphOpen, setNarrativeGraphOpen] = useState(false);
+
+  // Reset narrative graph panel when narrative overlay closes
+  useEffect(() => {
+    if (!narrativeMemoryId) setNarrativeGraphOpen(false);
+  }, [narrativeMemoryId]);
 
   useEffect(() => {
     const load = async () => {
@@ -619,6 +625,7 @@ export default function MemoryPreviewCanvas() {
     const memories = spineNodes.map(node => {
       const rec = recordMap.get(node.id);
       return {
+        id: node.id,
         key: node.key,
         description: rec?.description || node.text,
         details: rec?.details || '',
@@ -714,19 +721,32 @@ export default function MemoryPreviewCanvas() {
     setDetachedDetailPosition(null);
   }, [sortedRecords]);
 
-  const handleConstellationMemoryClick = useCallback((memoryId: string, anchor?: { clientX: number; clientY: number }) => {
+  const handleConstellationMemoryClick = useCallback((memoryId: string, _anchor?: { clientX: number; clientY: number }) => {
     const record = sortedRecords.find(r => r.id === memoryId);
+    if (!record) return;
+
+    // Don't set selectedRecord — detail card only opens via narrative text click
+    setConstellationFocusActive(true);
+    setDetailSource('constellation');
+    setNarrativeMemoryId(memoryId);
+    setShowDetails(false);
+    setShowMetaMenu(false);
+    setIsDetailDetached(false);
+    setDetachedDetailPosition(null);
+  }, [sortedRecords]);
+
+  const showDetailForMemory = useCallback((memId: string) => {
+    const record = sortedRecords.find(r => r.id === memId);
     if (!record) return;
 
     const keyText = normalizeValue(record.object || record.id);
     const createdSource = record.createdAt || record.time;
-    const shortTimeText = formatShortTime(record.time || record.createdAt);
     const emotion = normalizeValue(record.emotion);
     const emotionStyle = getEmotionStyle(emotion);
 
     setSelectedRecord({
       keyText,
-      shortTimeText,
+      shortTimeText: formatShortTime(record.time || record.createdAt),
       createdTimeText: formatCreatedTime(createdSource),
       category: normalizeValue(record.category),
       object: normalizeValue(record.object || record.id),
@@ -737,21 +757,10 @@ export default function MemoryPreviewCanvas() {
       color: emotionStyle.color,
       glow: emotionStyle.glow,
     });
-
-    setConstellationFocusActive(true);
-    setDetailSource('constellation');
-    setNarrativeMemoryId(memoryId);
     setShowDetails(false);
     setShowMetaMenu(false);
     setIsDetailDetached(false);
     setDetachedDetailPosition(null);
-
-    if (anchor && constellationMainRef.current) {
-      const rect = constellationMainRef.current.getBoundingClientRect();
-      const localX = anchor.clientX - rect.left;
-      const localY = anchor.clientY - rect.top;
-      setConstellationDetailAnchor({ x: localX, y: localY });
-    }
   }, [sortedRecords]);
 
   const handleCopyNarrative = useCallback(() => {
@@ -813,7 +822,15 @@ export default function MemoryPreviewCanvas() {
     navigator.clipboard.writeText(sections.join('\n'));
   }, [narrativeContext, sortedRecords]);
 
-  const closeDetail = useCallback(() => {
+  const closeDetailCard = useCallback(() => {
+    setSelectedRecord(null);
+    setShowDetails(false);
+    setShowMetaMenu(false);
+    setIsDetailDetached(false);
+    setDetachedDetailPosition(null);
+  }, []);
+
+  const closeNarrative = useCallback(() => {
     setSelectedRecord(null);
     setNarrativeMemoryId(null);
     setDetailSource(null);
@@ -822,14 +839,16 @@ export default function MemoryPreviewCanvas() {
     setShowMetaMenu(false);
     setIsDetailDetached(false);
     setDetachedDetailPosition(null);
+    setNarrativeGraphOpen(false);
   }, []);
 
   const clearConstellationFocus = useCallback(() => {
     setConstellationFocusActive(false);
   }, []);
 
-  const showConstellationDetail =
-    viewMode === 'constellation' && selectedRecord && detailSource === 'constellation';
+  const showNarrativeOverlay =
+    viewMode === 'constellation' && !!narrativeMemoryId && detailSource === 'constellation';
+  const showConstellationDetail = showNarrativeOverlay && !!selectedRecord;
   const showStreamDetail = selectedRecord && detailSource === 'stream';
 
   const constellationDetailStyle = useMemo(() => {
@@ -951,7 +970,7 @@ export default function MemoryPreviewCanvas() {
       )}
 
       <div className="memory-detail-controls">
-        <button className="memory-detail-close memory-detail-close-danger" onClick={closeDetail}>
+        <button className="memory-detail-close memory-detail-close-danger" onClick={closeDetailCard}>
           Close
         </button>
         <div className="memory-detail-menu memory-detail-menu-corner" ref={metaMenuRef}>
@@ -1039,30 +1058,48 @@ export default function MemoryPreviewCanvas() {
                 embeddingsData={embeddingsData}
                 onMemoryClick={handleConstellationMemoryClick}
                 onClearFocus={clearConstellationFocus}
-                focusMemoryId={showConstellationDetail ? narrativeMemoryId : null}
+                focusMemoryId={showNarrativeOverlay ? narrativeMemoryId : null}
                 onFocusAnchorChange={handleConstellationFocusAnchorChange}
                 highlightedMemoryIds={
-                  showConstellationDetail && constellationFocusActive ? (narrativeContext?.listedIds ?? []) : []
+                  showNarrativeOverlay && constellationFocusActive ? (narrativeContext?.listedIds ?? []) : []
                 }
                 sequenceMemoryIds={
-                  showConstellationDetail && constellationFocusActive ? (narrativeContext?.primarySequenceIds ?? []) : []
+                  showNarrativeOverlay && constellationFocusActive ? (narrativeContext?.primarySequenceIds ?? []) : []
                 }
               />
             )
           )}
-          {showConstellationDetail && narrativeContext && (
-            <div className="narrative-graph-floating">
-              <NarrativeGraph
-                currentMemory={narrativeContext.currentMemory}
-                chains={narrativeContext.chains}
-                onNodeClick={handleNarrativeNodeClick}
-                onCopyAll={handleCopyNarrative}
-                resizable
-              />
-            </div>
+          {showNarrativeOverlay && narrativeContext && (
+            <>
+              <button
+                className={`narrative-graph-handle${narrativeGraphOpen ? ' narrative-graph-handle--open' : ''}`}
+                onClick={() => setNarrativeGraphOpen(v => !v)}
+              >
+                {narrativeGraphOpen ? '\u25C0' : '\u25B6'}
+              </button>
+              <div className={`narrative-graph-floating${narrativeGraphOpen ? ' narrative-graph-floating--open' : ' narrative-graph-floating--closed'}`}>
+                <button className="narrative-graph-close" onClick={closeNarrative} aria-label="Close narrative">
+                  \u2715
+                </button>
+                <NarrativeGraph
+                  currentMemory={narrativeContext.currentMemory}
+                  chains={narrativeContext.chains}
+                  onNodeClick={handleNarrativeNodeClick}
+                  onCopyAll={handleCopyNarrative}
+                  resizable
+                />
+              </div>
+            </>
           )}
-          {showConstellationDetail && (narrativeLoading || narrativeText) && (
-            <div className="narrative-text-floating">
+          {showNarrativeOverlay && (narrativeLoading || narrativeText) && (
+            <div
+              className="narrative-text-floating"
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                const memId = target.dataset?.memId;
+                if (memId) showDetailForMemory(memId);
+              }}
+            >
               {narrativeLoading ? (
                 <div className="narrative-text-loading">Generating narrative...</div>
               ) : (
@@ -1070,6 +1107,7 @@ export default function MemoryPreviewCanvas() {
                   className="narrative-text-body"
                   dangerouslySetInnerHTML={{
                     __html: (narrativeText ?? '')
+                      .replace(/\*\*\[memId:([^\]]+)\](.+?)\*\*/g, '<span class="narrative-key narrative-key-link" data-mem-id="$1">$2</span>')
                       .replace(/\*\*(.+?)\*\*/g, '<strong class="narrative-key">$1</strong>')
                       .replace(/\n\n+/g, '<br/><br/>')
                   }}
@@ -1082,7 +1120,7 @@ export default function MemoryPreviewCanvas() {
       </div>
 
       {showStreamDetail && (
-        <div className="memory-detail-backdrop" onClick={closeDetail}>
+        <div className="memory-detail-backdrop" onClick={closeNarrative}>
           <div onClick={(event) => event.stopPropagation()}>
             {detailCard}
           </div>
