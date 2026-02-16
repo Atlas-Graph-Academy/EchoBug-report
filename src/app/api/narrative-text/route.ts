@@ -8,6 +8,48 @@ interface NarrativeMemory {
   createdAt: string;
 }
 
+function toRelativeTimeLabel(isoLike: string, now: Date): string {
+  const t = new Date(isoLike).getTime();
+  if (Number.isNaN(t)) return 'some time ago';
+  const diffMs = now.getTime() - t;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const days = Math.round(Math.abs(diffMs) / dayMs);
+  const isPast = diffMs >= 0;
+
+  const suffix = isPast ? 'ago' : 'later';
+  if (days <= 1) return isPast ? 'recently' : 'very soon';
+  if (days < 7) return `${days} days ${suffix}`;
+  if (days < 14) return isPast ? 'about a week ago' : 'in about a week';
+  if (days < 30) return isPast ? 'a few weeks ago' : 'in a few weeks';
+  if (days < 60) return isPast ? 'about a month ago' : 'in about a month';
+  if (days < 180) return isPast ? 'a few months ago' : 'in a few months';
+  if (days < 365) return isPast ? 'several months ago' : 'several months later';
+  const years = Math.max(1, Math.round(days / 365));
+  return years === 1
+    ? (isPast ? 'about a year ago' : 'about a year later')
+    : `${years} years ${suffix}`;
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function ensureAllKeysMentioned(text: string, keys: string[]): string {
+  const clean = (text || '').trim();
+  const missing = keys.filter((key) => {
+    if (!key) return false;
+    const re = new RegExp(escapeRegex(key), 'i');
+    return !re.test(clean);
+  });
+  if (missing.length === 0) return clean;
+
+  const bridge = missing.length === 1
+    ? `${missing[0]} also kept shaping how that story moved.`
+    : `${missing.join(', ')} also kept shaping how that story moved.`;
+
+  return clean ? `${clean} ${bridge}` : bridge;
+}
+
 export async function POST(request: Request) {
   try {
     const { memories } = (await request.json()) as { memories: NarrativeMemory[] };
@@ -28,12 +70,16 @@ export async function POST(request: Request) {
     }
 
     const now = new Date();
-    const nowIso = now.toISOString();
+    const requiredKeys = memories
+      .map((m) => m.key?.trim())
+      .filter((k): k is string => !!k);
 
     const memoryDescriptions = memories
       .map(
-        (m, i) =>
-          `${i + 1}. [${m.createdAt}] "${m.key}": ${m.description}${m.details ? ` — ${m.details}` : ''}`
+        (m, i) => {
+          const relTime = toRelativeTimeLabel(m.createdAt, now);
+          return `${i + 1}. (${relTime}) ${m.key}: ${m.description}${m.details ? ` — ${m.details}` : ''}`;
+        }
       )
       .join('\n');
 
@@ -42,23 +88,26 @@ export async function POST(request: Request) {
         {
           parts: [
             {
-              text: `You are a memory narrator. Write one concise first-person ("I") reflective passage in English.
-
-Current moment anchor:
-- Current time is ${nowIso}
-- The narration should feel grounded in "now", looking back across these memories.
+              text: `You are a professional storyteller. Write one concise first-person ("I") reflective passage in English.
 
 Writing rules:
 - Include EVERY memory key exactly as-is, at least once (no rewriting, no translation, no abbreviation).
+- Key coverage is mandatory: if one key is missing, rewrite before finalizing.
+- Keep each key text verbatim (same words and punctuation), so downstream UI matching can highlight and click it.
 - Keep keys as plain text only (no markdown, no quotes, no brackets around keys).
 - Do NOT output bullet points or numbered lists. One flowing paragraph.
 - Do NOT start with a date.
+- Start naturally with an approximate time context (for example: a few months ago, several days later), not with a clock-like timestamp.
 - Keep it compact: around 120-220 words.
 - Keep sentence style natural and spoken, but thoughtful.
-- Do NOT narrate linearly only. Weave across time: compare moments, show contrasts, and highlight how events/emotions evolved.
+- Do NOT narrate linearly only. Weave across time with flexible relative timing language.
+- Explicitly connect memories through relationships (cause and effect, contrast, continuation, or emotional echo) so the links between nodes are clear.
 - Integrate the whole set so each memory is understandable on its own while also contributing to a broader recall arc.
 - Focus on emotional shifts, repeated patterns, turning points, and present-day meaning.
 - No opening disclaimer and no closing summary label.
+
+Required keys (must appear verbatim in the final paragraph):
+${requiredKeys.join(', ')}
 
 Memories to weave:
 ${memoryDescriptions}`,
@@ -88,7 +137,8 @@ ${memoryDescriptions}`,
     }
 
     const data = await resp.json();
-    const narrative = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const narrativeRaw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const narrative = ensureAllKeysMentioned(narrativeRaw, requiredKeys);
 
     return NextResponse.json({ narrative: narrative.trim(), keyIdMap });
   } catch (err) {
