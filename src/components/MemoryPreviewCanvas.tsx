@@ -1109,6 +1109,7 @@ export default function MemoryPreviewCanvas() {
                     __html: (narrativeText ?? '')
                       .replace(/\*\*\[memId:([^\]]+)\](.+?)\*\*/g, '<span class="narrative-key narrative-key-link" data-mem-id="$1">$2</span>')
                       .replace(/\*\*(.+?)\*\*/g, '<strong class="narrative-key">$1</strong>')
+                      .replace(/\[memId:([^\]]+)\](\S+)/g, '<span class="narrative-key narrative-key-link" data-mem-id="$1">$2</span>')
                       .replace(/\n\n+/g, '<br/><br/>')
                   }}
                 />
