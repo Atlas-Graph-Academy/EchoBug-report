@@ -2473,7 +2473,10 @@ function ClusterGraph({
   }, []);
 
   useEffect(() => {
-    const focusIds = Array.from(new Set([...highlightedMemoryIds, ...sequenceMemoryIds]));
+    // Prioritize the primary sequence path for camera fit so the teal narrative
+    // chain occupies most of the viewport instead of being diluted by side chains.
+    const preferredIds = sequenceMemoryIds.length > 0 ? sequenceMemoryIds : highlightedMemoryIds;
+    const focusIds = Array.from(new Set(preferredIds));
     if (focusIds.length === 0) return;
 
     let cancelled = false;
@@ -2507,20 +2510,19 @@ function ClusterGraph({
         if (p.y > maxY) maxY = p.y;
       }
 
-      const worldPad = Math.max(50, Math.min(vw, vh) * 0.11);
-      minX -= worldPad;
-      maxX += worldPad;
-      minY -= worldPad;
-      maxY += worldPad;
-
       const spanX = Math.max(1, maxX - minX);
       const spanY = Math.max(1, maxY - minY);
-      const targetScaleRaw = Math.min(vw / spanX, vh / spanY);
+      // Keep a thin on-screen margin while maximizing occupied area for readability.
+      const marginX = Math.max(28, vw * 0.06);
+      const marginY = Math.max(24, vh * 0.1);
+      const fitW = Math.max(1, vw - marginX * 2);
+      const fitH = Math.max(1, vh - marginY * 2);
+      const targetScaleRaw = Math.min(fitW / spanX, fitH / spanY);
       const currentScale = cameraRef.current.scale;
 
       const targetScale = points.length > 1
-        ? clamp(targetScaleRaw, 0.12, 2.2)
-        : clamp(Math.min(currentScale, 2.2), 0.8, 2.2);
+        ? clamp(targetScaleRaw, 0.2, 5.2)
+        : clamp(Math.max(currentScale, 2.2), 1.2, 5.2);
 
       const cx = (minX + maxX) * 0.5;
       const cy = (minY + maxY) * 0.5;

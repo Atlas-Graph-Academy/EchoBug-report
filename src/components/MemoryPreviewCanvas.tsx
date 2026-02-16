@@ -393,8 +393,7 @@ export default function MemoryPreviewCanvas() {
   const metaMenuRef = useRef<HTMLDivElement>(null);
   const detailCardRef = useRef<HTMLElement>(null);
   const peoplePanelRef = useRef<HTMLDivElement>(null);
-  const spineNarrativePanelRef = useRef<HTMLDivElement>(null);
-  const personNarrativePanelRef = useRef<HTMLDivElement>(null);
+  const narrativePanelRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -427,12 +426,10 @@ export default function MemoryPreviewCanvas() {
   const [peoplePanelVisible, setPeoplePanelVisible] = useState(true);
   const [peoplePanelDetached, setPeoplePanelDetached] = useState(false);
   const [peoplePanelPosition, setPeoplePanelPosition] = useState<{ left: number; top: number } | null>(null);
-  const [spineNarrativeVisible, setSpineNarrativeVisible] = useState(true);
-  const [spineNarrativeDetached, setSpineNarrativeDetached] = useState(false);
-  const [spineNarrativePosition, setSpineNarrativePosition] = useState<{ left: number; top: number } | null>(null);
-  const [personNarrativeVisible, setPersonNarrativeVisible] = useState(true);
-  const [personNarrativeDetached, setPersonNarrativeDetached] = useState(false);
-  const [personNarrativePosition, setPersonNarrativePosition] = useState<{ left: number; top: number } | null>(null);
+  const [narrativeMode, setNarrativeMode] = useState<'chain' | 'person'>('chain');
+  const [narrativePanelVisible, setNarrativePanelVisible] = useState(true);
+  const [narrativePanelDetached, setNarrativePanelDetached] = useState(false);
+  const [narrativePanelPosition, setNarrativePanelPosition] = useState<{ left: number; top: number } | null>(null);
 
   // Reset narrative graph panel when narrative overlay closes
   useEffect(() => {
@@ -588,10 +585,17 @@ export default function MemoryPreviewCanvas() {
   useEffect(() => {
     if (activeEntity) {
       setPersonListOpen(true);
-      setPersonNarrativeVisible(true);
       setPeoplePanelVisible(true);
+      setNarrativePanelVisible(true);
+      setNarrativeMode('person');
     }
   }, [activeEntity]);
+
+  useEffect(() => {
+    if (!activeEntity && narrativeMode === 'person') {
+      setNarrativeMode('chain');
+    }
+  }, [activeEntity, narrativeMode]);
 
   useEffect(() => {
     if (!activeEntity || activePersonRecords.length === 0) {
@@ -723,6 +727,7 @@ export default function MemoryPreviewCanvas() {
       buildLayout(ctx, width);
 
       const scrollTop = container.scrollTop;
+      canvas.style.transform = `translateY(${scrollTop}px)`;
       const visibleTop = scrollTop - 80;
       const visibleBottom = scrollTop + height + 80;
 
@@ -937,6 +942,8 @@ export default function MemoryPreviewCanvas() {
     setSelectedRecord(toDisplayMemoryRecord(record));
 
     setConstellationFocusActive(true);
+    setActiveEntity(null);
+    setNarrativeMode('chain');
     setNarrativeMemoryId(nodeId);
     setShowDetails(false);
     setShowMetaMenu(false);
@@ -950,6 +957,8 @@ export default function MemoryPreviewCanvas() {
 
     // Don't set selectedRecord — detail card only opens via narrative text click
     setConstellationFocusActive(true);
+    setActiveEntity(null);
+    setNarrativeMode('chain');
     setDetailSource('constellation');
     setNarrativeMemoryId(memoryId);
     setShowDetails(false);
@@ -975,6 +984,7 @@ export default function MemoryPreviewCanvas() {
     setSelectedRecord(toDisplayMemoryRecord(record));
     setNarrativeMemoryId(memoryId);
     setConstellationFocusActive(true);
+    setNarrativeMode('person');
     setDetailSource(viewMode === 'constellation' ? 'constellation' : 'stream');
     setShowDetails(false);
     setShowMetaMenu(false);
@@ -1070,23 +1080,31 @@ export default function MemoryPreviewCanvas() {
   const showConstellationDetail = showNarrativeOverlay && !!selectedRecord;
   const showStreamDetail = selectedRecord && detailSource === 'stream';
 
+  const usingPersonNarrative = narrativeMode === 'person' && !!activeEntity;
+  const showUnifiedNarrativePanel =
+    viewMode === 'constellation' &&
+    (
+      (usingPersonNarrative && (personNarrativeLoading || !!personNarrativeText)) ||
+      (!usingPersonNarrative && showNarrativeOverlay && (narrativeLoading || !!narrativeText))
+    );
+  const unifiedNarrativeTitle = usingPersonNarrative ? activeEntity.name : 'Narrative';
+  const unifiedNarrativeLoading = usingPersonNarrative ? personNarrativeLoading : narrativeLoading;
+  const unifiedNarrativeHtml = usingPersonNarrative
+    ? buildNarrativeHtml(personNarrativeText ?? '', personNarrativeKeyIdMap)
+    : buildNarrativeHtml(narrativeText ?? '', narrativeKeyIdMap);
+
   useEffect(() => {
-    if (showNarrativeOverlay) {
-      setSpineNarrativeVisible(true);
-      setSpineNarrativeDetached(false);
-      setSpineNarrativePosition(null);
+    if (showUnifiedNarrativePanel) {
+      setNarrativePanelVisible(true);
+      setNarrativePanelDetached(false);
+      setNarrativePanelPosition(null);
     }
-  }, [showNarrativeOverlay, narrativeMemoryId]);
+  }, [showUnifiedNarrativePanel, narrativeMemoryId, activeEntity?.name]);
 
   const handleFloatingDragStart = useCallback(
-    (panel: 'people' | 'spine' | 'person', event: React.MouseEvent<HTMLElement>) => {
+    (panel: 'people' | 'narrative', event: React.MouseEvent<HTMLElement>) => {
       if (!constellationMainRef.current) return;
-      const panelEl =
-        panel === 'people'
-          ? peoplePanelRef.current
-          : panel === 'spine'
-            ? spineNarrativePanelRef.current
-            : personNarrativePanelRef.current;
+      const panelEl = panel === 'people' ? peoplePanelRef.current : narrativePanelRef.current;
       if (!panelEl) return;
 
       event.preventDefault();
@@ -1097,8 +1115,7 @@ export default function MemoryPreviewCanvas() {
       const offsetY = event.clientY - panelRect.top;
 
       if (panel === 'people') setPeoplePanelDetached(true);
-      if (panel === 'spine') setSpineNarrativeDetached(true);
-      if (panel === 'person') setPersonNarrativeDetached(true);
+      if (panel === 'narrative') setNarrativePanelDetached(true);
 
       const onMove = (ev: MouseEvent) => {
         const sideSafe = 10;
@@ -1116,8 +1133,7 @@ export default function MemoryPreviewCanvas() {
 
         const next = { left: Math.round(left), top: Math.round(top) };
         if (panel === 'people') setPeoplePanelPosition(next);
-        if (panel === 'spine') setSpineNarrativePosition(next);
-        if (panel === 'person') setPersonNarrativePosition(next);
+        if (panel === 'narrative') setNarrativePanelPosition(next);
       };
 
       const onUp = () => {
@@ -1139,21 +1155,13 @@ export default function MemoryPreviewCanvas() {
     return { left: `${left}px`, top: `${top}px` };
   }, [peoplePanelDetached, peoplePanelPosition]);
 
-  const spineNarrativeStyle = useMemo(() => {
-    if (!spineNarrativeDetached || !spineNarrativePosition || !constellationMainRef.current) return undefined;
+  const narrativePanelStyle = useMemo(() => {
+    if (!narrativePanelDetached || !narrativePanelPosition || !constellationMainRef.current) return undefined;
     const main = constellationMainRef.current;
-    const left = clamp(spineNarrativePosition.left, 10, Math.max(10, main.clientWidth - 340));
-    const top = clamp(spineNarrativePosition.top, 54, Math.max(54, main.clientHeight - 180));
+    const left = clamp(narrativePanelPosition.left, 10, Math.max(10, main.clientWidth - 340));
+    const top = clamp(narrativePanelPosition.top, 54, Math.max(54, main.clientHeight - 180));
     return { left: `${left}px`, top: `${top}px` };
-  }, [spineNarrativeDetached, spineNarrativePosition]);
-
-  const personNarrativeStyle = useMemo(() => {
-    if (!personNarrativeDetached || !personNarrativePosition || !constellationMainRef.current) return undefined;
-    const main = constellationMainRef.current;
-    const left = clamp(personNarrativePosition.left, 10, Math.max(10, main.clientWidth - 340));
-    const top = clamp(personNarrativePosition.top, 54, Math.max(54, main.clientHeight - 180));
-    return { left: `${left}px`, top: `${top}px` };
-  }, [personNarrativeDetached, personNarrativePosition]);
+  }, [narrativePanelDetached, narrativePanelPosition]);
 
   const constellationHighlightedMemoryIds = useMemo(() => {
     if (showNarrativeOverlay && constellationFocusActive) return narrativeContext?.listedIds ?? [];
@@ -1473,24 +1481,24 @@ export default function MemoryPreviewCanvas() {
               </div>
             </>
           )}
-          {showNarrativeOverlay && (narrativeLoading || narrativeText) && !spineNarrativeVisible && (
-            <button className="memory-floating-reopen memory-narrative-reopen" onClick={() => setSpineNarrativeVisible(true)}>
+          {showUnifiedNarrativePanel && !narrativePanelVisible && (
+            <button className="memory-floating-reopen memory-narrative-reopen" onClick={() => setNarrativePanelVisible(true)}>
               Narrative
             </button>
           )}
-          {showNarrativeOverlay && (narrativeLoading || narrativeText) && spineNarrativeVisible && (
+          {showUnifiedNarrativePanel && narrativePanelVisible && (
             <div
-              ref={spineNarrativePanelRef}
-              className={`narrative-text-floating${spineNarrativeDetached ? ' memory-floating-detached' : ''}`}
-              style={spineNarrativeStyle}
+              ref={narrativePanelRef}
+              className={`narrative-text-floating${activeEntity ? ' person-narrative-floating' : ''}${narrativePanelDetached ? ' memory-floating-detached' : ''}`}
+              style={narrativePanelStyle}
             >
-              <div className="memory-floating-header" onMouseDown={(e) => handleFloatingDragStart('spine', e)}>
-                <h3>Narrative</h3>
+              <div className="memory-floating-header" onMouseDown={(e) => handleFloatingDragStart('narrative', e)}>
+                <h3>{unifiedNarrativeTitle}</h3>
                 <button
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSpineNarrativeVisible(false);
+                    setNarrativePanelVisible(false);
                   }}
                   aria-label="Close narrative text"
                 >
@@ -1501,61 +1509,21 @@ export default function MemoryPreviewCanvas() {
                 onClick={(e) => {
                   const target = e.target as HTMLElement;
                   const memId = target.dataset?.memId;
-                  if (memId) showDetailForMemory(memId);
+                  if (!memId) return;
+                  if (usingPersonNarrative) {
+                    handlePersonMemoryClick(memId);
+                  } else {
+                    showDetailForMemory(memId);
+                  }
                 }}
               >
-                {narrativeLoading ? (
+                {unifiedNarrativeLoading ? (
                   <div className="narrative-text-loading">Generating narrative...</div>
                 ) : (
                   <div
                     className="narrative-text-body"
                     dangerouslySetInnerHTML={{
-                      __html: buildNarrativeHtml(narrativeText ?? '', narrativeKeyIdMap)
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-          )}
-          {viewMode === 'constellation' && activeEntity && (personNarrativeLoading || personNarrativeText) && !personNarrativeVisible && (
-            <button className="memory-floating-reopen memory-person-narrative-reopen" onClick={() => setPersonNarrativeVisible(true)}>
-              {activeEntity.name}
-            </button>
-          )}
-          {viewMode === 'constellation' && activeEntity && (personNarrativeLoading || personNarrativeText) && personNarrativeVisible && (
-            <div
-              ref={personNarrativePanelRef}
-              className={`narrative-text-floating person-narrative-floating${personNarrativeDetached ? ' memory-floating-detached' : ''}`}
-              style={personNarrativeStyle}
-            >
-              <div className="memory-floating-header" onMouseDown={(e) => handleFloatingDragStart('person', e)}>
-                <h3>{activeEntity.name}</h3>
-                <button
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPersonNarrativeVisible(false);
-                  }}
-                  aria-label="Close person narrative"
-                >
-                  ×
-                </button>
-              </div>
-              <div
-                onClick={(e) => {
-                  const target = e.target as HTMLElement;
-                  const memId = target.dataset?.memId;
-                  if (memId) handlePersonMemoryClick(memId);
-                }}
-              >
-                <div className="person-narrative-title">Narrative for {activeEntity.name}</div>
-                {personNarrativeLoading ? (
-                  <div className="narrative-text-loading">Generating narrative...</div>
-                ) : (
-                  <div
-                    className="narrative-text-body"
-                    dangerouslySetInnerHTML={{
-                      __html: buildNarrativeHtml(personNarrativeText ?? '', personNarrativeKeyIdMap),
+                      __html: unifiedNarrativeHtml,
                     }}
                   />
                 )}

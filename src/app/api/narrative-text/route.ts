@@ -27,6 +27,9 @@ export async function POST(request: Request) {
       if (m.key && m.id) keyIdMap[m.key] = m.id;
     }
 
+    const now = new Date();
+    const nowIso = now.toISOString();
+
     const memoryDescriptions = memories
       .map(
         (m, i) =>
@@ -39,19 +42,25 @@ export async function POST(request: Request) {
         {
           parts: [
             {
-              text: `你是一个回忆故事的讲述者。用第一人称「我」把下面这些记忆片段串成一段简短的内心独白。
+              text: `You are a memory narrator. Write one concise first-person ("I") reflective passage in English.
 
-规则：
-- 每句话要短，像说话一样自然
-- 必须把每条记忆的 key 原封不动地嵌入到句子中（不要改写、缩写或翻译 key，保持原文）
-- 不要用任何特殊格式（不要加粗、不要引号、不要括号包裹 key）
-- 不要用日期开头，不要列表，写成一整段流畅的文字
-- 捕捉情绪变化和内在联系
-- 总字数控制在 150-300 字
-- 可以中英混用，保持原始 key 的语言
-- 不要加开头语或结尾总结
+Current moment anchor:
+- Current time is ${nowIso}
+- The narration should feel grounded in "now", looking back across these memories.
 
-Memories:
+Writing rules:
+- Include EVERY memory key exactly as-is, at least once (no rewriting, no translation, no abbreviation).
+- Keep keys as plain text only (no markdown, no quotes, no brackets around keys).
+- Do NOT output bullet points or numbered lists. One flowing paragraph.
+- Do NOT start with a date.
+- Keep it compact: around 120-220 words.
+- Keep sentence style natural and spoken, but thoughtful.
+- Do NOT narrate linearly only. Weave across time: compare moments, show contrasts, and highlight how events/emotions evolved.
+- Integrate the whole set so each memory is understandable on its own while also contributing to a broader recall arc.
+- Focus on emotional shifts, repeated patterns, turning points, and present-day meaning.
+- No opening disclaimer and no closing summary label.
+
+Memories to weave:
 ${memoryDescriptions}`,
             },
           ],

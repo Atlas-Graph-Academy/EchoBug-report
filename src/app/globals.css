@@ -1003,10 +1003,6 @@ main {
   left: 16px;
   top: 80px;
 }
-.memory-person-narrative-reopen {
-  right: 16px;
-  top: 280px;
-}
 .memory-emotion-tags {
   position: sticky;
   top: 0;
@@ -1052,6 +1048,8 @@ main {
   left: 0;
   display: block;
   cursor: pointer;
+  z-index: 1;
+  will-change: transform;
 }
 .memory-status {
   flex: 1;
@@ -1535,12 +1533,6 @@ body.narrative-graph-resizing {
   top: 280px;
   border-color: rgba(94, 234, 212, 0.25);
 }
-.person-narrative-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #7ee8d7;
-  margin-bottom: 8px;
-}
 .narrative-key {
   color: #00d2d3;
   font-weight: 600;
@@ -1567,10 +1559,6 @@ body.narrative-graph-resizing {
   .memory-people-reopen {
     right: 12px;
     top: 60px;
-  }
-  .memory-person-narrative-reopen {
-    right: 12px;
-    top: 250px;
   }
   .narrative-text-floating {
     width: calc(100% - 24px);
