@@ -22,6 +22,7 @@ import type { MemoryNode, EmbeddingsData } from '@/lib/narrative';
 
 const CACHE_KEY_CLUSTERS = 'echo-cluster-cache';
 const CACHE_KEY_LABELS = 'echo-cluster-labels';
+const CACHE_KEY_THEME = 'echo-cluster-theme';
 
 /* ── palette (editorial: deep saturated on white) ── */
 const PALETTE = [
@@ -512,6 +513,8 @@ function ClusterGraph({
   const [clusterLinks, setClusterLinks] = useState<ClusterLink[]>([]);
   const [expandedCluster, setExpandedCluster] = useState<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState<number>(0);
+  const [visualTheme, setVisualTheme] = useState<'day' | 'night'>('day');
+  const visualThemeRef = useRef<'day' | 'night'>('day');
 
   useEffect(() => {
     expandedClusterRef.current = expandedCluster;
@@ -532,6 +535,27 @@ function ClusterGraph({
   useEffect(() => {
     onFocusAnchorChangeRef.current = onFocusAnchorChange;
   }, [onFocusAnchorChange]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CACHE_KEY_THEME);
+      if (saved === 'night' || saved === 'day') {
+        visualThemeRef.current = saved;
+        setVisualTheme(saved);
+      }
+    } catch {
+      // ignore storage read failures
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CACHE_KEY_THEME, visualTheme);
+    } catch {
+      // ignore storage write failures
+    }
+    visualThemeRef.current = visualTheme;
+  }, [visualTheme]);
 
   // Load selfie portrait image
   useEffect(() => {
@@ -1469,10 +1493,49 @@ function ClusterGraph({
         return true;
       };
 
+      const isNightMode = visualThemeRef.current === 'night';
+      const theme = isNightMode
+        ? {
+            bgStart: '#0f141c',
+            bgEnd: '#1b2430',
+            clusterEdge: 'rgba(196,210,230,0.24)',
+            clusterEdgeActive: 'rgba(214,226,242,0.52)',
+            clusterEdgeFaint: 'rgba(196,210,230,0.08)',
+            subEdgeFallback: 0.18,
+            labelText: 'rgba(236,240,246,0.92)',
+            labelCard: 'rgba(23,30,40,0.78)',
+            labelCardText: 'rgba(230,236,245,0.9)',
+            memLabelGrad0: 'rgba(30,39,52,0.94)',
+            memLabelGrad1: 'rgba(21,28,38,0.84)',
+            memLabelText: 'rgba(228,234,244,0.9)',
+            memLabelShadow: 'rgba(0,0,0,0.3)',
+            nodeCount: 'rgba(235,239,245,0.86)',
+            focusLabelCard: 'rgba(19,25,33,0.84)',
+            focusLabelText: 'rgba(202,225,255,0.9)',
+          }
+        : {
+            bgStart: '#fafafa',
+            bgEnd: '#f0f0f0',
+            clusterEdge: 'rgba(0,0,0,0.12)',
+            clusterEdgeActive: 'rgba(0,0,0,0.25)',
+            clusterEdgeFaint: 'rgba(0,0,0,0.02)',
+            subEdgeFallback: 0.12,
+            labelText: 'rgba(26,26,26,0.85)',
+            labelCard: 'rgba(255,255,255,0.85)',
+            labelCardText: 'rgba(30,30,30,0.72)',
+            memLabelGrad0: 'rgba(255,255,255,0.85)',
+            memLabelGrad1: 'rgba(255,255,255,0.7)',
+            memLabelText: 'rgba(30,30,30,0.72)',
+            memLabelShadow: 'rgba(0,0,0,0.06)',
+            nodeCount: '#1a1a1a',
+            focusLabelCard: 'rgba(255, 255, 255, 0.85)',
+            focusLabelText: 'rgba(60, 60, 60, 0.65)',
+          };
+
       // Background
       const bg = ctx.createLinearGradient(0, 0, vw, vh);
-      bg.addColorStop(0, '#fafafa');
-      bg.addColorStop(1, '#f0f0f0');
+      bg.addColorStop(0, theme.bgStart);
+      bg.addColorStop(1, theme.bgEnd);
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, vw, vh);
 
@@ -1608,8 +1671,8 @@ function ClusterGraph({
         const accentG = Math.round((ng * 0.9 + 0.1) * 255);
         const accentB = Math.round((nb * 0.9 + 0.1) * 255);
         const textColor = variant === 'hover'
-          ? 'rgba(30,30,30,0.88)'
-          : 'rgba(30,30,30,0.72)';
+          ? (isNightMode ? 'rgba(240,244,250,0.95)' : 'rgba(30,30,30,0.88)')
+          : theme.memLabelText;
 
         ctx.save();
         ctx.font = `${variant === 'hover' ? 620 : 560} ${fs}px "Avenir Next", "Segoe UI", sans-serif`;
@@ -1618,17 +1681,22 @@ function ClusterGraph({
 
         const grad = ctx.createLinearGradient(cx, by, cx, by + bh);
         if (variant === 'hover') {
-          grad.addColorStop(0, 'rgba(255,255,255,0.92)');
-          grad.addColorStop(1, 'rgba(255,255,255,0.82)');
+          if (isNightMode) {
+            grad.addColorStop(0, 'rgba(35,46,61,0.96)');
+            grad.addColorStop(1, 'rgba(23,31,42,0.9)');
+          } else {
+            grad.addColorStop(0, 'rgba(255,255,255,0.92)');
+            grad.addColorStop(1, 'rgba(255,255,255,0.82)');
+          }
         } else {
-          grad.addColorStop(0, 'rgba(255,255,255,0.85)');
-          grad.addColorStop(1, 'rgba(255,255,255,0.7)');
+          grad.addColorStop(0, theme.memLabelGrad0);
+          grad.addColorStop(1, theme.memLabelGrad1);
         }
 
         ctx.shadowBlur = (variant === 'hover' ? 8 : 5) * invS;
         ctx.shadowColor = variant === 'hover'
-          ? `rgba(0,0,0,0.08)`
-          : 'rgba(0,0,0,0.06)';
+          ? (isNightMode ? 'rgba(0,0,0,0.36)' : 'rgba(0,0,0,0.08)')
+          : theme.memLabelShadow;
         ctx.fillStyle = grad;
         roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
         ctx.fill();
@@ -1756,16 +1824,16 @@ function ClusterGraph({
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.quadraticCurveTo(cpx, cpy, tx, ty);
-        if (isExpMode) {
+          if (isExpMode) {
           if (connectsExpanded) {
-            ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+            ctx.strokeStyle = theme.clusterEdgeActive;
             ctx.lineWidth = (baseWidth * 1.45 + 0.35) * invS;
           } else {
-            ctx.strokeStyle = 'rgba(0,0,0,0.02)';
+            ctx.strokeStyle = theme.clusterEdgeFaint;
             ctx.lineWidth = Math.max(0.3, baseWidth * 0.55) * invS;
           }
         } else {
-          ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+          ctx.strokeStyle = theme.clusterEdge;
           ctx.lineWidth = baseWidth * invS;
         }
         ctx.stroke();
@@ -1941,7 +2009,7 @@ function ClusterGraph({
             ctx.beginPath();
             ctx.moveTo(s.x, s.y);
             ctx.lineTo(t.x, t.y);
-            ctx.strokeStyle = `rgba(0,0,0,${0.04 + link.similarity * 0.08})`;
+            ctx.strokeStyle = `rgba(0,0,0,${theme.subEdgeFallback * 0.35 + link.similarity * theme.subEdgeFallback})`;
             ctx.lineWidth = 0.3 * invS;
             ctx.stroke();
           }
@@ -1966,17 +2034,24 @@ function ClusterGraph({
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
         if (isExpanded) {
-          ctx.fillStyle = 'rgba(255,255,255,0.15)';
+          ctx.fillStyle = isNightMode ? 'rgba(210,224,244,0.16)' : 'rgba(255,255,255,0.15)';
         } else {
           // Frosted glass: radial gradient from white-ish center to tinted edge
           const frost = ctx.createRadialGradient(
             node.x, node.y, node.radius * 0.1,
             node.x, node.y, node.radius,
           );
-          frost.addColorStop(0, 'rgba(255,255,255,0.72)');
-          frost.addColorStop(0.55, 'rgba(252,252,252,0.58)');
-          frost.addColorStop(0.85, `${node.color}28`);
-          frost.addColorStop(1, `${node.color}18`);
+          if (isNightMode) {
+            frost.addColorStop(0, 'rgba(236,243,255,0.4)');
+            frost.addColorStop(0.55, 'rgba(190,207,230,0.24)');
+            frost.addColorStop(0.85, `${node.color}3a`);
+            frost.addColorStop(1, `${node.color}28`);
+          } else {
+            frost.addColorStop(0, 'rgba(255,255,255,0.72)');
+            frost.addColorStop(0.55, 'rgba(252,252,252,0.58)');
+            frost.addColorStop(0.85, `${node.color}28`);
+            frost.addColorStop(1, `${node.color}18`);
+          }
           ctx.fillStyle = frost;
         }
         ctx.shadowBlur = isHovered ? 12 : 6;
@@ -2047,7 +2122,7 @@ function ClusterGraph({
           ctx.font = `500 ${11 * invS}px "Avenir Next", sans-serif`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillStyle = '#1a1a1a';
+          ctx.fillStyle = theme.nodeCount;
           ctx.fillText(`${node.size}`, node.x, node.y);
           ctx.restore();
         }
@@ -2239,7 +2314,7 @@ function ClusterGraph({
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.shadowBlur = 0;
-          ctx.fillStyle = 'rgba(26,26,26,0.85)';
+          ctx.fillStyle = theme.labelText;
           ctx.fillText(node.label, node.x, node.y - yOff);
           ctx.shadowBlur = 0;
           ctx.restore();
@@ -2264,12 +2339,12 @@ function ClusterGraph({
 
           ctx.shadowBlur = 4 * invS;
           ctx.shadowColor = 'rgba(0,0,0,0.06)';
-          ctx.fillStyle = 'rgba(255,255,255,0.85)';
+          ctx.fillStyle = theme.labelCard;
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
           ctx.fill();
 
           ctx.shadowBlur = 0;
-          ctx.fillStyle = 'rgba(30,30,30,0.72)';
+          ctx.fillStyle = theme.labelCardText;
           ctx.fillText(label.text, cx, cy + 0.2 * invS);
           ctx.restore();
         }
@@ -2300,11 +2375,11 @@ function ClusterGraph({
           const bh = fs + py * 2;
           const cx = item.x;
           const cy = item.y - 10 * invS - bh * 0.5;
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.fillStyle = theme.focusLabelCard;
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
           ctx.fill();
           const isTeal = item.color.includes('234, 212');
-          ctx.fillStyle = isTeal ? 'rgba(13, 148, 136, 0.9)' : 'rgba(60, 60, 60, 0.65)';
+          ctx.fillStyle = isTeal ? theme.focusLabelText : theme.labelCardText;
           ctx.fillText(text, cx, cy + 0.2 * invS);
           ctx.restore();
         }
@@ -2821,7 +2896,10 @@ function ClusterGraph({
   }
 
   return (
-    <div ref={containerRef} className="cluster-graph-container">
+    <div
+      ref={containerRef}
+      className={`cluster-graph-container${visualTheme === 'night' ? ' cluster-graph-container--night' : ''}`}
+    >
       <canvas
         ref={glCanvasRef}
         className="cluster-graph-webgl"
@@ -2835,6 +2913,13 @@ function ClusterGraph({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
       />
+      <button
+        className={`cluster-theme-toggle${expandedCluster === null ? ' cluster-theme-toggle--solo' : ''}`}
+        onClick={() => setVisualTheme((v) => (v === 'night' ? 'day' : 'night'))}
+        aria-label={visualTheme === 'night' ? 'Switch to day mode' : 'Switch to night mode'}
+      >
+        {visualTheme === 'night' ? 'Day mode' : 'Night mode'}
+      </button>
       {expandedCluster !== null && (
         <button className="cluster-collapse-btn" onClick={collapseCluster}>
           Back
