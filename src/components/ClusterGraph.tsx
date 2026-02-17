@@ -1496,33 +1496,41 @@ function ClusterGraph({
       const isNightMode = visualThemeRef.current === 'night';
       const theme = isNightMode
         ? {
-            bgStart: '#0f141c',
-            bgEnd: '#1b2430',
-            clusterEdge: 'rgba(196,210,230,0.24)',
-            clusterEdgeActive: 'rgba(214,226,242,0.52)',
-            clusterEdgeFaint: 'rgba(196,210,230,0.08)',
-            subEdgeFallback: 0.18,
-            labelText: 'rgba(236,240,246,0.92)',
-            labelCard: 'rgba(23,30,40,0.78)',
-            labelCardText: 'rgba(230,236,245,0.9)',
-            memLabelGrad0: 'rgba(30,39,52,0.94)',
-            memLabelGrad1: 'rgba(21,28,38,0.84)',
-            memLabelText: 'rgba(228,234,244,0.9)',
-            memLabelShadow: 'rgba(0,0,0,0.3)',
-            nodeCount: 'rgba(235,239,245,0.86)',
-            focusLabelCard: 'rgba(19,25,33,0.84)',
-            focusLabelText: 'rgba(202,225,255,0.9)',
+            bgStart: '#04070d',
+            bgEnd: '#0a111c',
+            bgStripe: 'rgba(255,255,255,0.018)',
+            bgVignette: 'rgba(0,0,0,0.5)',
+            clusterEdge: 'rgba(196,210,230,0.34)',
+            clusterEdgeActive: 'rgba(225,236,250,0.72)',
+            clusterEdgeFaint: 'rgba(176,194,220,0.12)',
+            subEdgeRgb: [170, 190, 220] as const,
+            subEdgeFallback: 0.24,
+            labelText: 'rgba(239,244,252,0.96)',
+            labelCard: 'rgba(12,17,26,0.96)',
+            labelCardText: 'rgba(226,235,248,0.94)',
+            labelBorder: 'rgba(181,203,231,0.24)',
+            memLabelGrad0: 'rgba(16,23,34,0.98)',
+            memLabelGrad1: 'rgba(16,23,34,0.98)',
+            memLabelText: 'rgba(228,236,248,0.94)',
+            memLabelShadow: 'rgba(0,0,0,0)',
+            nodeCount: 'rgba(239,244,252,0.92)',
+            focusLabelCard: 'rgba(12,17,26,0.98)',
+            focusLabelText: 'rgba(152,231,218,0.94)',
           }
         : {
             bgStart: '#fafafa',
             bgEnd: '#f0f0f0',
+            bgStripe: 'rgba(0,0,0,0)',
+            bgVignette: 'rgba(0,0,0,0)',
             clusterEdge: 'rgba(0,0,0,0.12)',
             clusterEdgeActive: 'rgba(0,0,0,0.25)',
             clusterEdgeFaint: 'rgba(0,0,0,0.02)',
+            subEdgeRgb: [0, 0, 0] as const,
             subEdgeFallback: 0.12,
             labelText: 'rgba(26,26,26,0.85)',
             labelCard: 'rgba(255,255,255,0.85)',
             labelCardText: 'rgba(30,30,30,0.72)',
+            labelBorder: 'rgba(0,0,0,0)',
             memLabelGrad0: 'rgba(255,255,255,0.85)',
             memLabelGrad1: 'rgba(255,255,255,0.7)',
             memLabelText: 'rgba(30,30,30,0.72)',
@@ -1538,6 +1546,19 @@ function ClusterGraph({
       bg.addColorStop(1, theme.bgEnd);
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, vw, vh);
+      if (isNightMode) {
+        // Subtle vertical scan/texture to create depth without blur haze.
+        for (let x = 0; x < vw; x += 5) {
+          const a = (0.008 + (Math.sin(x * 0.035) * 0.5 + 0.5) * 0.014);
+          ctx.fillStyle = `rgba(255,255,255,${a})`;
+          ctx.fillRect(x, 0, 1, vh);
+        }
+        const vignette = ctx.createRadialGradient(vw * 0.5, vh * 0.5, Math.min(vw, vh) * 0.15, vw * 0.5, vh * 0.5, Math.max(vw, vh) * 0.72);
+        vignette.addColorStop(0, 'rgba(0,0,0,0)');
+        vignette.addColorStop(1, theme.bgVignette);
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, vw, vh);
+      }
 
       // Animate camera
       const now = performance.now();
@@ -1682,8 +1703,8 @@ function ClusterGraph({
         const grad = ctx.createLinearGradient(cx, by, cx, by + bh);
         if (variant === 'hover') {
           if (isNightMode) {
-            grad.addColorStop(0, 'rgba(35,46,61,0.96)');
-            grad.addColorStop(1, 'rgba(23,31,42,0.9)');
+            grad.addColorStop(0, 'rgba(20,28,39,0.98)');
+            grad.addColorStop(1, 'rgba(20,28,39,0.98)');
           } else {
             grad.addColorStop(0, 'rgba(255,255,255,0.92)');
             grad.addColorStop(1, 'rgba(255,255,255,0.82)');
@@ -1697,18 +1718,28 @@ function ClusterGraph({
         ctx.shadowColor = variant === 'hover'
           ? (isNightMode ? 'rgba(0,0,0,0.36)' : 'rgba(0,0,0,0.08)')
           : theme.memLabelShadow;
+        if (isNightMode) ctx.shadowBlur = (variant === 'hover' ? 1.5 : 0.6) * invS;
         ctx.fillStyle = grad;
         roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
         ctx.fill();
+        if (isNightMode) {
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = theme.labelBorder;
+          ctx.lineWidth = 1.05 * invS;
+          roundedRectPath(ctx, cx - bw / 2, by, bw, bh, radius);
+          ctx.stroke();
+        }
 
         // Subtle top highlight for "glass" look.
-        ctx.shadowBlur = 0;
-        const hi = ctx.createLinearGradient(cx, by, cx, by + bh * 0.6);
-        hi.addColorStop(0, 'rgba(255,255,255,0.5)');
-        hi.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = hi;
-        roundedRectPath(ctx, cx - bw / 2 + 0.2 * invS, by + 0.2 * invS, bw - 0.4 * invS, bh * 0.58, radius * 0.84);
-        ctx.fill();
+        if (!isNightMode) {
+          ctx.shadowBlur = 0;
+          const hi = ctx.createLinearGradient(cx, by, cx, by + bh * 0.6);
+          hi.addColorStop(0, 'rgba(255,255,255,0.5)');
+          hi.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = hi;
+          roundedRectPath(ctx, cx - bw / 2 + 0.2 * invS, by + 0.2 * invS, bw - 0.4 * invS, bh * 0.58, radius * 0.84);
+          ctx.fill();
+        }
 
         ctx.shadowBlur = 0;
 
@@ -1824,17 +1855,17 @@ function ClusterGraph({
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.quadraticCurveTo(cpx, cpy, tx, ty);
-          if (isExpMode) {
+        if (isExpMode) {
           if (connectsExpanded) {
             ctx.strokeStyle = theme.clusterEdgeActive;
-            ctx.lineWidth = (baseWidth * 1.45 + 0.35) * invS;
+            ctx.lineWidth = (isNightMode ? (baseWidth * 1.08 + 0.16) : (baseWidth * 1.45 + 0.35)) * invS;
           } else {
             ctx.strokeStyle = theme.clusterEdgeFaint;
-            ctx.lineWidth = Math.max(0.3, baseWidth * 0.55) * invS;
+            ctx.lineWidth = Math.max(0.28, (isNightMode ? baseWidth * 0.42 : baseWidth * 0.55)) * invS;
           }
         } else {
           ctx.strokeStyle = theme.clusterEdge;
-          ctx.lineWidth = baseWidth * invS;
+          ctx.lineWidth = (isNightMode ? baseWidth * 0.86 : baseWidth) * invS;
         }
         ctx.stroke();
       }
@@ -1974,19 +2005,22 @@ function ClusterGraph({
             const r255 = Math.round(r * 255);
             const g255 = Math.round(g * 255);
             const b255 = Math.round(b * 255);
-            ctx.strokeStyle = `rgba(${r255},${g255},${b255},${alpha * 0.5})`;
-            ctx.lineWidth = width * 2.05;
-            drawSmoothBundle(ctx, path.points);
-            ctx.stroke();
+            if (!isNightMode) {
+              ctx.strokeStyle = `rgba(${r255},${g255},${b255},${alpha * 0.5})`;
+              ctx.lineWidth = width * 2.05;
+              drawSmoothBundle(ctx, path.points);
+              ctx.stroke();
+            }
 
-            ctx.strokeStyle = `rgba(${r255},${g255},${b255},${alpha})`;
-            ctx.lineWidth = width;
+            const nightAlphaBoost = isNightMode ? 1.28 : 1;
+            ctx.strokeStyle = `rgba(${r255},${g255},${b255},${alpha * nightAlphaBoost})`;
+            ctx.lineWidth = isNightMode ? width * 0.82 : width;
             drawSmoothBundle(ctx, path.points);
             ctx.stroke();
           }
 
           const expand = expandInfoRef.current;
-          if (expand) {
+          if (expand && !isNightMode) {
             const coreR = expand.boundaryR * 0.34;
             const coreMask = ctx.createRadialGradient(expand.cx, expand.cy, coreR * 0.04, expand.cx, expand.cy, coreR);
             coreMask.addColorStop(0, 'rgba(250,250,250,0.4)');
@@ -2009,8 +2043,10 @@ function ClusterGraph({
             ctx.beginPath();
             ctx.moveTo(s.x, s.y);
             ctx.lineTo(t.x, t.y);
-            ctx.strokeStyle = `rgba(0,0,0,${theme.subEdgeFallback * 0.35 + link.similarity * theme.subEdgeFallback})`;
-            ctx.lineWidth = 0.3 * invS;
+            const [sr, sg, sb] = theme.subEdgeRgb;
+            const edgeAlpha = theme.subEdgeFallback * 0.35 + link.similarity * theme.subEdgeFallback;
+            ctx.strokeStyle = `rgba(${sr},${sg},${sb},${edgeAlpha})`;
+            ctx.lineWidth = (isNightMode ? 0.5 : 0.3) * invS;
             ctx.stroke();
           }
         }
@@ -2034,7 +2070,7 @@ function ClusterGraph({
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
         if (isExpanded) {
-          ctx.fillStyle = isNightMode ? 'rgba(210,224,244,0.16)' : 'rgba(255,255,255,0.15)';
+          ctx.fillStyle = isNightMode ? 'rgba(196,216,242,0.03)' : 'rgba(255,255,255,0.15)';
         } else {
           // Frosted glass: radial gradient from white-ish center to tinted edge
           const frost = ctx.createRadialGradient(
@@ -2054,29 +2090,40 @@ function ClusterGraph({
           }
           ctx.fillStyle = frost;
         }
-        ctx.shadowBlur = isHovered ? 12 : 6;
-        ctx.shadowColor = 'rgba(0,0,0,0.08)';
+        ctx.shadowBlur = isNightMode ? (isHovered ? 2.4 : 1.2) : (isHovered ? 12 : 6);
+        ctx.shadowColor = isNightMode ? 'rgba(114,160,220,0.16)' : 'rgba(0,0,0,0.08)';
         ctx.fill();
 
         // Inner highlight for glass depth
         ctx.shadowBlur = 0;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y - node.radius * 0.15, node.radius * 0.85, 0, Math.PI * 2);
-        const highlight = ctx.createRadialGradient(
-          node.x, node.y - node.radius * 0.3, 0,
-          node.x, node.y - node.radius * 0.15, node.radius * 0.85,
-        );
-        highlight.addColorStop(0, 'rgba(255,255,255,0.32)');
-        highlight.addColorStop(0.5, 'rgba(255,255,255,0.08)');
-        highlight.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = highlight;
-        ctx.fill();
+        if (isNightMode && !isExpanded) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, node.radius * 0.78, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(5,10,18,0.82)';
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y - node.radius * 0.15, node.radius * 0.85, 0, Math.PI * 2);
+          const highlight = ctx.createRadialGradient(
+            node.x, node.y - node.radius * 0.3, 0,
+            node.x, node.y - node.radius * 0.15, node.radius * 0.85,
+          );
+          highlight.addColorStop(0, 'rgba(255,255,255,0.32)');
+          highlight.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+          highlight.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = highlight;
+          ctx.fill();
+        }
 
         // Crisp border
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-        ctx.strokeStyle = isExpanded ? `${node.color}60` : `${node.color}aa`;
-        ctx.lineWidth = isHovered ? 2 : isExpanded ? 1 : 1.4;
+        ctx.strokeStyle = isNightMode
+          ? (isExpanded ? 'rgba(210,228,252,0.78)' : `${node.color}d0`)
+          : (isExpanded ? `${node.color}60` : `${node.color}aa`);
+        ctx.lineWidth = isNightMode
+          ? (isHovered ? 2.2 : isExpanded ? 1.4 : 1.6)
+          : (isHovered ? 2 : isExpanded ? 1 : 1.4);
         if (isExpanded) ctx.setLineDash([4, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
@@ -2337,11 +2384,17 @@ function ClusterGraph({
           const cx = Math.max(worldLeft + bw / 2 + 4 * invS, Math.min(worldRight - bw / 2 - 4 * invS, label.x));
           const cy = Math.max(worldTop + bh / 2 + 4 * invS, Math.min(worldBottom - bh / 2 - 4 * invS, label.y));
 
-          ctx.shadowBlur = 4 * invS;
-          ctx.shadowColor = 'rgba(0,0,0,0.06)';
+          ctx.shadowBlur = isNightMode ? 0 : 4 * invS;
+          ctx.shadowColor = isNightMode ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.06)';
           ctx.fillStyle = theme.labelCard;
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
           ctx.fill();
+          if (isNightMode) {
+            ctx.strokeStyle = theme.labelBorder;
+            ctx.lineWidth = 0.9 * invS;
+            roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, rr);
+            ctx.stroke();
+          }
 
           ctx.shadowBlur = 0;
           ctx.fillStyle = theme.labelCardText;
@@ -2378,6 +2431,12 @@ function ClusterGraph({
           ctx.fillStyle = theme.focusLabelCard;
           roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
           ctx.fill();
+          if (isNightMode) {
+            ctx.strokeStyle = theme.labelBorder;
+            ctx.lineWidth = 0.9 * invS;
+            roundedRectPath(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6 * invS);
+            ctx.stroke();
+          }
           const isTeal = item.color.includes('234, 212');
           ctx.fillStyle = isTeal ? theme.focusLabelText : theme.labelCardText;
           ctx.fillText(text, cx, cy + 0.2 * invS);
@@ -2390,8 +2449,8 @@ function ClusterGraph({
       if (selfieImg) {
         const imgAspect = selfieImg.naturalWidth / Math.max(1, selfieImg.naturalHeight);
         const layout = getSelfieLayout(vw, vh, imgAspect);
-        const portraitAlpha = focusMode ? 0.3 : 1;
-        const glowAlpha = focusMode ? 0.18 : 1;
+        const portraitAlpha = isNightMode ? (focusMode ? 0.46 : 0.66) : (focusMode ? 0.3 : 1);
+        const glowAlpha = isNightMode ? (focusMode ? 0.04 : 0.08) : (focusMode ? 0.18 : 1);
 
         let feathered = selfieFeatheredRef.current;
         const needsRebuild = !feathered ||

@@ -1787,6 +1787,7 @@ body.narrative-graph-resizing {
 .cluster-graph-container--night .cluster-theme-toggle {
   border-color: rgba(210,225,245,0.26);
   background: rgba(18,24,34,0.84);
+  backdrop-filter: none;
   color: rgba(232,238,248,0.92);
   box-shadow: 0 2px 8px rgba(0,0,0,0.24);
 }
