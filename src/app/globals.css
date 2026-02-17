@@ -728,6 +728,12 @@ main {
   color: #8fb2c6;
   margin-top: 3px;
 }
+.memory-page-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .memory-gate-screen {
   min-height: 100dvh;
   background: radial-gradient(circle at 20% 20%, #163a56, #090f21 60%);

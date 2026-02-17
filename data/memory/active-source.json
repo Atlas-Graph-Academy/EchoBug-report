@@ -1,0 +1,8 @@
+{
+  "datasetId": "kobe-default",
+  "label": "Kobe dataset",
+  "csvPath": "/Users/kobe/EchoBug report/data/memory/datasets/kobe-default/records.csv",
+  "embeddingsPath": "/Users/kobe/EchoBug report/data/memory/datasets/kobe-default/embeddings.json",
+  "owner": "kobe",
+  "updatedAt": "2026-02-17T18:15:22.906Z"
+}

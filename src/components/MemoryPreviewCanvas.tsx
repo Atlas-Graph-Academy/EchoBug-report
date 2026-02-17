@@ -51,8 +51,10 @@ interface ExtractedEntity {
   memoryIds: string[];
 }
 
-const CSV_PATH = '/echo-memories-2026-02-15.csv';
-const EMBEDDINGS_PATH = '/echo-embeddings.json';
+interface MemoryDataResponse {
+  records: MemoryRecord[];
+  embeddingsData: EmbeddingsData | null;
+}
 
 const EMOTION_PALETTE = [
   { color: '#ff9f43', glow: 'rgba(255,159,67,0.45)' },
@@ -66,97 +68,6 @@ const EMOTION_PALETTE = [
   { color: '#7bed9f', glow: 'rgba(123,237,159,0.45)' },
   { color: '#70a1ff', glow: 'rgba(112,161,255,0.45)' },
 ];
-
-function parseCsv(content: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < content.length; i += 1) {
-    const char = content[i];
-
-    if (inQuotes) {
-      if (char === '"') {
-        if (content[i + 1] === '"') {
-          field += '"';
-          i += 1;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += char;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inQuotes = true;
-      continue;
-    }
-
-    if (char === ',') {
-      row.push(field);
-      field = '';
-      continue;
-    }
-
-    if (char === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-      continue;
-    }
-
-    if (char !== '\r') {
-      field += char;
-    }
-  }
-
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-
-  return rows;
-}
-
-function mapRecords(rows: string[][]): MemoryRecord[] {
-  if (!rows.length) return [];
-
-  const header = rows[0];
-  const getIndex = (name: string) => header.indexOf(name);
-
-  const idIndex = getIndex('id');
-  const objectIndex = getIndex('object');
-  const categoryIndex = getIndex('category');
-  const emotionIndex = getIndex('emotion');
-  const descriptionIndex = getIndex('description');
-  const detailsIndex = getIndex('details');
-  const visibilityIndex = getIndex('visibility');
-  const locationIndex = getIndex('location');
-  const timeIndex = getIndex('time');
-  const createdAtIndex = getIndex('created_at');
-
-  const read = (row: string[], index: number) => (index >= 0 ? (row[index] ?? '').trim() : '');
-
-  return rows
-    .slice(1)
-    .filter((row) => row.some((value) => value.trim().length > 0))
-    .map((row) => ({
-      id: read(row, idIndex),
-      object: read(row, objectIndex),
-      category: read(row, categoryIndex),
-      emotion: read(row, emotionIndex),
-      description: read(row, descriptionIndex),
-      details: read(row, detailsIndex),
-      visibility: read(row, visibilityIndex),
-      location: read(row, locationIndex),
-      time: read(row, timeIndex),
-      createdAt: read(row, createdAtIndex),
-    }));
-}
 
 function formatShortTime(value: string): string {
   if (!value) return 'Unknown';
@@ -391,7 +302,7 @@ function toDisplayMemoryRecord(record: MemoryRecord): DisplayMemoryRecord {
   };
 }
 
-export default function MemoryPreviewCanvas() {
+export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const constellationMainRef = useRef<HTMLDivElement>(null);
   const metaMenuRef = useRef<HTMLDivElement>(null);
@@ -442,21 +353,14 @@ export default function MemoryPreviewCanvas() {
 
   useEffect(() => {
     const load = async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const [csvResponse, embResponse] = await Promise.all([
-          fetch(CSV_PATH),
-          fetch(EMBEDDINGS_PATH),
-        ]);
-
-        if (!csvResponse.ok) throw new Error(`Failed to load memory CSV (${csvResponse.status})`);
-
-        const content = await csvResponse.text();
-        setRecords(mapRecords(parseCsv(content)));
-
-        if (embResponse.ok) {
-          const embJson = await embResponse.json();
-          setEmbeddingsData(embJson as EmbeddingsData);
-        }
+        const response = await fetch('/api/memory-data', { credentials: 'include' });
+        if (!response.ok) throw new Error(`Failed to load memory data (${response.status})`);
+        const data = (await response.json()) as MemoryDataResponse;
+        setRecords(Array.isArray(data.records) ? data.records : []);
+        setEmbeddingsData(data.embeddingsData || null);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to read memory data';
         setError(message);
@@ -466,7 +370,7 @@ export default function MemoryPreviewCanvas() {
     };
 
     load();
-  }, []);
+  }, [reloadKey]);
 
   useEffect(() => {
     if (!selectedRecord) return;
