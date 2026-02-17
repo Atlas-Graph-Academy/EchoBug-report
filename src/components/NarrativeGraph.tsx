@@ -42,18 +42,18 @@ interface NarrativeGraphProps {
   resizable?: boolean;
 }
 
-/* ── Emotion palette ── */
+/* ── Emotion palette (editorial: deep saturated on white) ── */
 const PALETTE = [
-  { color: '#ff9f43', glow: 'rgba(255,159,67,0.5)' },
-  { color: '#f368e0', glow: 'rgba(243,104,224,0.5)' },
-  { color: '#00d2d3', glow: 'rgba(0,210,211,0.5)' },
-  { color: '#54a0ff', glow: 'rgba(84,160,255,0.5)' },
-  { color: '#feca57', glow: 'rgba(254,202,87,0.5)' },
-  { color: '#a29bfe', glow: 'rgba(162,155,254,0.5)' },
-  { color: '#1dd1a1', glow: 'rgba(29,209,161,0.5)' },
-  { color: '#ff6b81', glow: 'rgba(255,107,129,0.5)' },
-  { color: '#7bed9f', glow: 'rgba(123,237,159,0.5)' },
-  { color: '#70a1ff', glow: 'rgba(112,161,255,0.5)' },
+  { color: '#e67e22', glow: 'rgba(230,126,34,0.18)' },
+  { color: '#be2edd', glow: 'rgba(190,46,221,0.18)' },
+  { color: '#0097a7', glow: 'rgba(0,151,167,0.18)' },
+  { color: '#2563eb', glow: 'rgba(37,99,235,0.18)' },
+  { color: '#d4a017', glow: 'rgba(212,160,23,0.18)' },
+  { color: '#7c3aed', glow: 'rgba(124,58,237,0.18)' },
+  { color: '#059669', glow: 'rgba(5,150,105,0.18)' },
+  { color: '#dc2626', glow: 'rgba(220,38,38,0.18)' },
+  { color: '#16a34a', glow: 'rgba(22,163,74,0.18)' },
+  { color: '#1d4ed8', glow: 'rgba(29,78,216,0.18)' },
 ];
 
 function hash(s: string): number {
@@ -374,8 +374,8 @@ function drawFlow(
 
   // Background
   const bg = ctx.createLinearGradient(0, 0, width, height);
-  bg.addColorStop(0, '#090d18');
-  bg.addColorStop(1, '#0b1122');
+  bg.addColorStop(0, '#fafafa');
+  bg.addColorStop(1, '#f0f0f0');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, width, height);
 
@@ -391,7 +391,7 @@ function drawFlow(
     const axisY = sorted[0].y;
 
     ctx.save();
-    ctx.strokeStyle = 'rgba(94,234,212,0.1)';
+    ctx.strokeStyle = 'rgba(13,148,136,0.15)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(sorted[0].x - 20, axisY);
@@ -400,7 +400,7 @@ function drawFlow(
 
     // Small arrow at the right end
     const endX = sorted[sorted.length - 1].x + 20;
-    ctx.fillStyle = 'rgba(94,234,212,0.18)';
+    ctx.fillStyle = 'rgba(13,148,136,0.25)';
     ctx.beginPath();
     ctx.moveTo(endX, axisY);
     ctx.lineTo(endX - 6, axisY - 3);
@@ -410,7 +410,7 @@ function drawFlow(
 
     // "TIME →" label
     ctx.font = '500 7px "Avenir Next", sans-serif';
-    ctx.fillStyle = 'rgba(94,234,212,0.22)';
+    ctx.fillStyle = 'rgba(13,148,136,0.3)';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillText('TIME →', sorted[sorted.length - 1].x + 18, axisY + 14);
@@ -460,10 +460,10 @@ function drawFlow(
     const isSecondary = node.role !== 'spine';
     const r = isHovered ? node.radius + 3 : node.radius;
 
-    // Outer glow
+    // Subtle shadow (editorial: no glow)
     ctx.save();
-    ctx.shadowBlur = isHovered ? 22 : isSecondary ? 10 : 14;
-    ctx.shadowColor = node.glow;
+    ctx.shadowBlur = isHovered ? 4 : 1.5;
+    ctx.shadowColor = 'rgba(0,0,0,0.12)';
 
     // Circle fill
     ctx.beginPath();
@@ -494,7 +494,7 @@ function drawFlow(
     if (node.role === 'spine') {
       // Date label BELOW the node (on the time axis)
       ctx.font = '500 8px "Avenir Next", sans-serif';
-      ctx.fillStyle = 'rgba(180,200,225,0.55)';
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(node.dateLabel, node.x, node.y + r + 6);
@@ -510,8 +510,8 @@ function drawFlow(
       // Pill background
       ctx.save();
       ctx.globalAlpha = 0.9;
-      ctx.fillStyle = node.isCurrent ? `${node.color}30` : '#151b2e';
-      ctx.strokeStyle = node.isCurrent ? node.color : `${node.color}55`;
+      ctx.fillStyle = node.isCurrent ? `${node.color}20` : '#ffffff';
+      ctx.strokeStyle = node.isCurrent ? node.color : `${node.color}60`;
       ctx.lineWidth = node.isCurrent ? 1.2 : 0.7;
 
       const br = 6;
@@ -531,7 +531,7 @@ function drawFlow(
       ctx.restore();
 
       // Small vertical connector from pill to node
-      ctx.strokeStyle = `${node.color}30`;
+      ctx.strokeStyle = `${node.color}35`;
       ctx.lineWidth = 0.7;
       ctx.beginPath();
       ctx.moveTo(node.x, pillY + pillH);
@@ -542,13 +542,13 @@ function drawFlow(
       ctx.font = `600 10px "Avenir Next", "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = node.isCurrent ? '#ffffff' : '#c8d8ee';
+      ctx.fillStyle = node.isCurrent ? '#1a1a1a' : '#333333';
       ctx.fillText(node.label, node.x, pillY + pillH / 2);
 
       // "NOW" inside current node circle
       if (node.isCurrent) {
         ctx.font = 'bold 8px "Avenir Next", sans-serif';
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = '#1a1a1a';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('NOW', node.x, node.y);
@@ -577,8 +577,8 @@ function drawFlow(
       // Badge background
       ctx.save();
       ctx.globalAlpha = isHovered ? 0.95 : 0.82;
-      ctx.fillStyle = '#131929';
-      ctx.strokeStyle = isHovered ? 'rgba(194,212,230,0.72)' : 'rgba(178,197,216,0.5)';
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = isHovered ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.12)';
       ctx.lineWidth = 0.6;
 
       const br = 4;
@@ -601,13 +601,13 @@ function drawFlow(
       ctx.font = `600 9px "Avenir Next", "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = isHovered ? 'rgba(230,240,248,0.96)' : 'rgba(211,225,238,0.88)';
+      ctx.fillStyle = isHovered ? 'rgba(26,26,26,0.95)' : 'rgba(26,26,26,0.75)';
       ctx.fillText(node.label, badgeX + badgeW / 2, badgeY + badgeH / 2);
 
       // Date tiny
       if (node.dateLabel) {
         ctx.font = '400 7px "Avenir Next", sans-serif';
-        ctx.fillStyle = 'rgba(173,199,224,0.65)';
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         const dY = isUp ? badgeY - 10 : badgeY + badgeH + 2;
@@ -635,15 +635,15 @@ function drawFlow(
 
   if (spineNodes.length > 0) {
     const leftmost = spineNodes.reduce((a, b) => a.x < b.x ? a : b);
-    ctx.fillStyle = 'rgba(94,234,212,0.25)';
+    ctx.fillStyle = 'rgba(13,148,136,0.4)';
     ctx.fillText('NARRATIVE', leftmost.x - 50, leftmost.y);
   }
   if (branchUp.length > 0) {
-    ctx.fillStyle = 'rgba(160,170,180,0.2)';
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
     ctx.fillText('OBJECT', 6, branchUp[0].y);
   }
   if (branchDown.length > 0) {
-    ctx.fillStyle = 'rgba(160,170,180,0.2)';
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
     ctx.fillText('CATEGORY', 6, branchDown[0].y);
   }
 }
