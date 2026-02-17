@@ -1,0 +1,22 @@
+{
+  // 自动保存配置 - 确保 AI 编辑的代码自动保存
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 500,
+  
+  // 当编辑器失去焦点时也自动保存
+  "files.autoSaveWhenNoErrors": true,
+  
+  // 在窗口失去焦点时保存
+  "files.saveOnWindowChange": true,
+  
+  // TypeScript/JavaScript 相关设置
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "javascript.updateImportsOnFileMove.enabled": "always",
+  
+  // 编辑器设置
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  }
+}

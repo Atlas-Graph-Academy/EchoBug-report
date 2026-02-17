@@ -119,6 +119,68 @@ function forceBoundary(cx: number, cy: number, maxR: number) {
   return force;
 }
 
+/* ── custom d3-force: silhouette exclusion zone ──
+ * Pushes cluster nodes outside the person's face & body contour
+ * so the selfie portrait sits at the center with nodes orbiting around it.
+ */
+function forceExcludeBody(
+  containerRef: { current: HTMLDivElement | null },
+  selfieImgRef: { current: HTMLImageElement | null },
+) {
+  let nodes: ClusterNode[] = [];
+
+  function force(alpha: number) {
+    const container = containerRef.current;
+    const img = selfieImgRef.current;
+    if (!container || !img) return;
+
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
+    const layout = getSelfieLayout(w, h, aspect);
+
+    for (const n of nodes) {
+      if (n.x == null || n.y == null) continue;
+      const pad = n.radius + layout.excludeMargin;
+
+      // Head repulsion
+      {
+        const dx = n.x - layout.headCX;
+        const dy = n.y - layout.headCY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const thresh = layout.headR + pad;
+        if (dist < thresh && dist > 0.01) {
+          const t = (thresh - dist) / thresh;
+          const s = t * t * 4.5 * alpha;
+          n.vx! += (dx / dist) * s * thresh;
+          n.vy! += (dy / dist) * s * thresh;
+        }
+      }
+
+      // Body repulsion (elliptical)
+      {
+        const dx = n.x - layout.bodyCX;
+        const dy = n.y - layout.bodyCY;
+        const erx = layout.bodyRX + pad;
+        const ery = layout.bodyRY + pad;
+        const ed = Math.sqrt((dx / erx) ** 2 + (dy / ery) ** 2);
+        if (ed < 1 && ed > 0.01) {
+          const t = 1 - ed;
+          const s = t * t * 4.5 * alpha;
+          const rd = Math.sqrt(dx * dx + dy * dy);
+          if (rd > 0.01) {
+            n.vx! += (dx / rd) * s * Math.max(erx, ery);
+            n.vy! += (dy / rd) * s * Math.max(erx, ery);
+          }
+        }
+      }
+    }
+  }
+
+  force.initialize = (_nodes: ClusterNode[]) => { nodes = _nodes; };
+  return force;
+}
+
 /* ── types ── */
 interface ClusterNode extends SimulationNodeDatum {
   id: number;
@@ -306,6 +368,50 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+interface SelfieLayout {
+  cx: number;
+  cy: number;
+  imgW: number;
+  imgH: number;
+  headCX: number;
+  headCY: number;
+  headR: number;
+  bodyCX: number;
+  bodyCY: number;
+  bodyRX: number;
+  bodyRY: number;
+  excludeMargin: number;
+}
+
+function getSelfieLayout(viewW: number, viewH: number, aspectRatio: number): SelfieLayout {
+  const vw = Math.max(1, viewW);
+  const vh = Math.max(1, viewH);
+  const vm = Math.max(1, Math.min(vw, vh));
+  const aspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 0.78;
+
+  // Responsive sizing keeps portrait dominant across desktop/mobile.
+  const baseScale = vw <= 700 ? 0.88 : vw <= 1200 ? 0.8 : 0.72;
+  const imgH = clamp(vm * baseScale, vh * 0.58, vh * 0.9);
+  const imgW = imgH * aspect;
+  const cx = vw * 0.5;
+  const cy = vh * 0.55;
+
+  return {
+    cx,
+    cy,
+    imgW,
+    imgH,
+    headCX: cx - imgW * 0.02,
+    headCY: cy - imgH * 0.15,
+    headR: imgH * 0.22,
+    bodyCX: cx,
+    bodyCY: cy + imgH * 0.14,
+    bodyRX: imgW * 0.58,
+    bodyRY: imgH * 0.44,
+    excludeMargin: Math.max(48, vm * 0.07),
+  };
+}
+
 function unitVec(dx: number, dy: number): { x: number; y: number } {
   const d = Math.hypot(dx, dy);
   if (d < 1e-6) return { x: 1, y: 0 };
@@ -397,6 +503,11 @@ function ClusterGraph({
   const animStartRef = useRef<number>(0);
   const animDurationRef = useRef<number>(0);
 
+  // Selfie portrait
+  const selfieImgRef = useRef<HTMLImageElement | null>(null);
+  const selfieFeatheredRef = useRef<{ canvas: HTMLCanvasElement; w: number; h: number } | null>(null);
+  const [selfieLoaded, setSelfieLoaded] = useState(false);
+
   const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
   const [clusterLinks, setClusterLinks] = useState<ClusterLink[]>([]);
   const [expandedCluster, setExpandedCluster] = useState<number | null>(null);
@@ -421,6 +532,16 @@ function ClusterGraph({
   useEffect(() => {
     onFocusAnchorChangeRef.current = onFocusAnchorChange;
   }, [onFocusAnchorChange]);
+
+  // Load selfie portrait image
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      selfieImgRef.current = img;
+      setSelfieLoaded(true);
+    };
+    img.src = '/kobe-selfie.png';
+  }, []);
 
   useEffect(() => {
     const canvas = glCanvasRef.current;
@@ -763,6 +884,7 @@ function ClusterGraph({
       .force('charge', forceManyBody<ClusterNode>().strength(-520))
       .force('center', forceCenter(w / 2, h / 2))
       .force('collide', forceCollide<ClusterNode>().radius((d) => d.radius + 24))
+      .force('excludeBody', forceExcludeBody(containerRef, selfieImgRef) as any)
       .alphaDecay(0.02);
 
     simRef.current = sim;
@@ -824,6 +946,13 @@ function ClusterGraph({
     });
     return () => { sim.stop(); simRef.current = null; };
   }, [clusterNodes.length, clusterLinks.length, markWebGLDirty]);
+
+  // Reheat simulation when selfie loads so nodes settle outside the portrait
+  useEffect(() => {
+    if (selfieLoaded && simRef.current) {
+      simRef.current.alpha(0.6).restart();
+    }
+  }, [selfieLoaded]);
 
   // ── Apply/remove narrative left-to-right force ──
   useEffect(() => {
@@ -1299,7 +1428,7 @@ function ClusterGraph({
               pointColor[i * 4] = Math.min(1, r * baseMul * lum);
               pointColor[i * 4 + 1] = Math.min(1, g * baseMul * lum);
               pointColor[i * 4 + 2] = Math.min(1, b * baseMul * lum);
-              pointColor[i * 4 + 3] = isHighlighted ? (0.8 + 0.2 * blink) : 0.12;
+              pointColor[i * 4 + 3] = isHighlighted ? (0.86 + 0.14 * blink) : 0.28;
             } else {
               pointColor[i * 4] = r * baseMul;
               pointColor[i * 4 + 1] = g * baseMul;
@@ -1431,7 +1560,7 @@ function ClusterGraph({
         a.y < b.y + b.h + pad &&
         a.y + a.h + pad > b.y
       );
-      const measureMemLabel = (sn: MemSubNode, anchorR: number, variant: 'hover' | 'auto') => {
+      const measureMemLabel = (sn: MemSubNode, anchorR: number, variant: 'hover' | 'auto', slot = 0) => {
         if (sn.x == null || sn.y == null) return null;
         const nodeScreenR = anchorR * cam.scale;
         const sizeScale = clamp(nodeScreenR / (variant === 'hover' ? 12 : 10), 0.88, 1.35);
@@ -1450,15 +1579,28 @@ function ClusterGraph({
         const bh = fs + py * 2;
         const minX = worldLeft + bw / 2 + 6 * invS;
         const maxX = worldRight - bw / 2 - 6 * invS;
-        const cx = Math.max(minX, Math.min(maxX, sn.x));
+        const autoJitter = variant === 'auto'
+          ? ((((hash(`${sn.memId}:label:${slot}`) % 1000) / 1000) - 0.5) * (10 + slot * 6) * invS)
+          : 0;
+        const cx = Math.max(minX, Math.min(maxX, sn.x + autoJitter));
         let by = sn.y - anchorR - yGap - bh;
+        if (variant === 'auto' && slot % 2 === 1) by = sn.y + anchorR + yGap;
+        if (variant === 'auto' && slot >= 2) {
+          const drift = (slot - 1) * bh * 0.42;
+          by += slot % 2 === 1 ? drift : -drift;
+        }
         if (by < worldTop + 4 * invS) by = sn.y + anchorR + yGap;
         if (by + bh > worldBottom - 4 * invS) by = worldBottom - 4 * invS - bh;
         return { txt, fs, px, py, radius, chipR, chipGap, tw, bw, bh, cx, by };
       };
-      const drawMemLabel = (sn: MemSubNode, anchorR: number, variant: 'hover' | 'auto' = 'hover') => {
+      const drawMemLabel = (
+        sn: MemSubNode,
+        anchorR: number,
+        variant: 'hover' | 'auto' = 'hover',
+        slot = 0
+      ) => {
         if (sn.x == null || sn.y == null) return;
-        const layout = measureMemLabel(sn, anchorR, variant);
+        const layout = measureMemLabel(sn, anchorR, variant, slot);
         if (!layout) return;
         const { txt, fs, px, radius, chipR, chipGap, tw, bw, bh, cx, by } = layout;
         const [nr, ng, nb] = parseHexColor(sn.color);
@@ -1519,7 +1661,7 @@ function ClusterGraph({
       };
       const pendingEdgeEndLabels: Array<{ x: number; y: number; text: string; color: string }> = [];
       const pendingClusterLabels: Array<{ node: ClusterNode; alpha: number; hovered: boolean }> = [];
-      const pendingMemLabels: Array<{ sn: MemSubNode; anchorR: number; variant: 'hover' | 'auto' }> = [];
+      const pendingMemLabels: Array<{ sn: MemSubNode; anchorR: number; variant: 'hover' | 'auto'; slot?: number }> = [];
       const pendingFocusNodeLabels: Array<{ x: number; y: number; text: string; color: string }> = [];
 
       // ── Cluster edges ──
@@ -1623,7 +1765,7 @@ function ClusterGraph({
             ctx.lineWidth = Math.max(0.3, baseWidth * 0.55) * invS;
           }
         } else {
-          ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+          ctx.strokeStyle = 'rgba(0,0,0,0.12)';
           ctx.lineWidth = baseWidth * invS;
         }
         ctx.stroke();
@@ -1818,18 +1960,48 @@ function ClusterGraph({
         const focusAlpha = isNarrativeRelated ? blink : 0.12;
         const alpha = focusMode ? focusAlpha : (dimmed ? 0.12 : 1);
 
-        // Fill + border (editorial: solid, no glow)
+        // Fill + border — frosted glass (毛玻璃) effect
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.shadowBlur = isHovered ? 6 : 2;
-        ctx.shadowColor = 'rgba(0,0,0,0.1)';
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-        ctx.fillStyle = isExpanded ? 'rgba(0,0,0,0.025)' : `${node.color}0a`;
+        if (isExpanded) {
+          ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        } else {
+          // Frosted glass: radial gradient from white-ish center to tinted edge
+          const frost = ctx.createRadialGradient(
+            node.x, node.y, node.radius * 0.1,
+            node.x, node.y, node.radius,
+          );
+          frost.addColorStop(0, 'rgba(255,255,255,0.72)');
+          frost.addColorStop(0.55, 'rgba(252,252,252,0.58)');
+          frost.addColorStop(0.85, `${node.color}28`);
+          frost.addColorStop(1, `${node.color}18`);
+          ctx.fillStyle = frost;
+        }
+        ctx.shadowBlur = isHovered ? 12 : 6;
+        ctx.shadowColor = 'rgba(0,0,0,0.08)';
         ctx.fill();
+
+        // Inner highlight for glass depth
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = node.color;
-        ctx.lineWidth = isHovered ? 2.2 : isExpanded ? 1.2 : 1.5;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y - node.radius * 0.15, node.radius * 0.85, 0, Math.PI * 2);
+        const highlight = ctx.createRadialGradient(
+          node.x, node.y - node.radius * 0.3, 0,
+          node.x, node.y - node.radius * 0.15, node.radius * 0.85,
+        );
+        highlight.addColorStop(0, 'rgba(255,255,255,0.32)');
+        highlight.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+        highlight.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = highlight;
+        ctx.fill();
+
+        // Crisp border
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = isExpanded ? `${node.color}60` : `${node.color}aa`;
+        ctx.lineWidth = isHovered ? 2 : isExpanded ? 1 : 1.4;
         if (isExpanded) ctx.setLineDash([4, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
@@ -1985,37 +2157,69 @@ function ClusterGraph({
           .sort((a, b) => (b.importance || 0) - (a.importance || 0));
 
         const viewportCount = viewportNodes.length;
-        const minLabelBudget = 3;
-        const maxLabelBudget = 10;
-        const zoomRange = 6; // 从默认尺度逐步增长到满配 label 数量
-        const zoomT = Math.max(0, Math.min(1, (cam.scale - 1) / zoomRange));
-        const zoomBudget = Math.round(minLabelBudget + (maxLabelBudget - minLabelBudget) * zoomT);
-        const targetLabelCount = Math.min(maxLabelBudget, Math.max(minLabelBudget, zoomBudget), viewportCount);
+        const importanceFloor = cam.scale < 2 ? 0.32 : cam.scale < 3 ? 0.2 : 0.08;
+        const importantNodes = viewportNodes.filter((sn) => (sn.importance || 0) >= importanceFloor);
+        const rankedNodes = importantNodes.length >= 4 ? importantNodes : viewportNodes;
 
-        const selected: MemSubNode[] = [];
+        // Dynamic hard cap: depends on screen capacity + zoom depth.
+        // At current scale: show only key nodes. As user zooms in: reveal more labels progressively.
+        const minLabelBudget = 3;
+        const labelBudgetByArea = Math.max(6, Math.floor((vw * vh) / 52000));
+        const zoomGain = clamp(Math.pow(Math.max(1, cam.scale), 0.85), 1, 4);
+        const softBudget = Math.round(labelBudgetByArea * zoomGain * 0.5);
+        const maxLabelBudget = Math.min(
+          rankedNodes.length,
+          Math.max(minLabelBudget, Math.round((14 + vw / 140 + vh / 220 + cam.scale * 10) * 0.5))
+        );
+        const targetLabelCount = Math.max(
+          minLabelBudget,
+          Math.min(maxLabelBudget, softBudget, rankedNodes.length)
+        );
+
+        const selected: Array<{ sn: MemSubNode; anchorR: number; slot: number }> = [];
         const occupied: Array<{ x: number; y: number; w: number; h: number }> = [];
-        for (const sn of viewportNodes) {
+        for (const sn of rankedNodes) {
           if (selected.length >= targetLabelCount) break;
           const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
-          const layout = measureMemLabel(sn, baseR, 'auto');
-          if (!layout) continue;
-          const rect = { x: layout.cx - layout.bw / 2, y: layout.by, w: layout.bw, h: layout.bh };
-          const padding = 4.2 * invS;
-          let collides = false;
-          for (const occ of occupied) {
-            if (rectsOverlap(rect, occ, padding)) {
-              collides = true;
+          const attempts = cam.scale >= 2.6 ? 4 : 3;
+          let chosen: { layout: NonNullable<ReturnType<typeof measureMemLabel>>; slot: number; anchor: number } | null = null;
+
+          for (let slot = 0; slot < attempts; slot += 1) {
+            const anchor = baseR * (1 + slot * 0.45);
+            const layout = measureMemLabel(sn, anchor, 'auto', slot);
+            if (!layout) continue;
+            const rect = { x: layout.cx - layout.bw / 2, y: layout.by, w: layout.bw, h: layout.bh };
+            const padding = cam.scale >= 2.6 ? 2.4 * invS : 3.8 * invS;
+            let collides = false;
+            for (const occ of occupied) {
+              if (rectsOverlap(rect, occ, padding)) {
+                collides = true;
+                break;
+              }
+            }
+            if (!collides) {
+              chosen = { layout, slot, anchor };
               break;
             }
           }
-          if (collides) continue;
-          selected.push(sn);
-          occupied.push(rect);
+          if (!chosen) continue;
+
+          selected.push({ sn, anchorR: chosen.anchor, slot: chosen.slot });
+          occupied.push({
+            x: chosen.layout.cx - chosen.layout.bw / 2,
+            y: chosen.layout.by,
+            w: chosen.layout.bw,
+            h: chosen.layout.bh,
+          });
         }
 
-        for (const sn of selected) {
-          const baseR = nodeWorldR * (0.75 + (sn.importance || 0) * 1.3);
-          pendingMemLabels.push({ sn, anchorR: baseR, variant: 'auto' });
+        for (const item of selected) {
+          pendingMemLabels.push({
+            sn: item.sn,
+            anchorR: item.anchorR,
+            variant: 'auto',
+            slot: item.slot,
+          });
         }
       }
 
@@ -2073,7 +2277,7 @@ function ClusterGraph({
 
       if (!focusMode && pendingMemLabels.length > 0) {
         for (const item of pendingMemLabels) {
-          drawMemLabel(item.sn, item.anchorR, item.variant);
+          drawMemLabel(item.sn, item.anchorR, item.variant, item.slot ?? 0);
         }
       }
 
@@ -2104,6 +2308,68 @@ function ClusterGraph({
           ctx.fillText(text, cx, cy + 0.2 * invS);
           ctx.restore();
         }
+      }
+
+      // ── Portrait top layer: keep above all graph lines/nodes ──
+      const selfieImg = selfieImgRef.current;
+      if (selfieImg) {
+        const imgAspect = selfieImg.naturalWidth / Math.max(1, selfieImg.naturalHeight);
+        const layout = getSelfieLayout(vw, vh, imgAspect);
+        const portraitAlpha = focusMode ? 0.3 : 1;
+        const glowAlpha = focusMode ? 0.18 : 1;
+
+        let feathered = selfieFeatheredRef.current;
+        const needsRebuild = !feathered ||
+          Math.abs(feathered.w - layout.imgW) > 2 ||
+          Math.abs(feathered.h - layout.imgH) > 2;
+        if (needsRebuild) {
+          const off = document.createElement('canvas');
+          const pw = Math.ceil(layout.imgW);
+          const ph = Math.ceil(layout.imgH);
+          off.width = pw;
+          off.height = ph;
+          const offCtx = off.getContext('2d');
+          if (offCtx) {
+            offCtx.drawImage(selfieImg, 0, 0, pw, ph);
+            offCtx.globalCompositeOperation = 'destination-in';
+            const mask = offCtx.createRadialGradient(
+              pw * 0.48, ph * 0.35, ph * 0.12,
+              pw * 0.48, ph * 0.40, ph * 0.56,
+            );
+            mask.addColorStop(0, 'rgba(0,0,0,1)');
+            mask.addColorStop(0.55, 'rgba(0,0,0,0.95)');
+            mask.addColorStop(0.78, 'rgba(0,0,0,0.5)');
+            mask.addColorStop(0.92, 'rgba(0,0,0,0.15)');
+            mask.addColorStop(1, 'rgba(0,0,0,0)');
+            offCtx.fillStyle = mask;
+            offCtx.fillRect(0, 0, pw, ph);
+          }
+          feathered = { canvas: off, w: layout.imgW, h: layout.imgH };
+          selfieFeatheredRef.current = feathered;
+        }
+
+        ctx.save();
+        const glow = ctx.createRadialGradient(
+          layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.08,
+          layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58,
+        );
+        glow.addColorStop(0, `rgba(255,255,255,${0.5 * glowAlpha})`);
+        glow.addColorStop(0.4, `rgba(250,250,250,${0.22 * glowAlpha})`);
+        glow.addColorStop(1, 'rgba(245,245,245,0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.globalAlpha = portraitAlpha;
+        ctx.drawImage(
+          feathered.canvas,
+          layout.cx - layout.imgW / 2,
+          layout.cy - layout.imgH / 2,
+          layout.imgW,
+          layout.imgH,
+        );
+        ctx.restore();
       }
 
       const focusAnchorCallback = onFocusAnchorChangeRef.current;
