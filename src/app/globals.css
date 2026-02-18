@@ -1505,7 +1505,7 @@ body.narrative-graph-resizing {
 .narrative-text-floating {
   position: absolute;
   left: clamp(16px, 3.2vw, 54px);
-  top: clamp(84px, 18vh, 230px);
+  top: clamp(62px, 14vh, 180px);
   z-index: 36;
   width: clamp(420px, 34vw, 620px);
   max-height: none;
@@ -1677,7 +1677,7 @@ body.narrative-graph-resizing {
   .narrative-text-floating {
     width: calc(100% - 24px);
     left: 12px;
-    top: 64px;
+    top: 52px;
     max-height: 45vh;
     overflow-y: auto;
     scrollbar-width: thin;
@@ -1759,6 +1759,25 @@ body.narrative-graph-resizing {
   position: relative;
   z-index: 2;
 }
+.cluster-portrait-port {
+  position: absolute;
+  z-index: 12;
+  border: 1px dashed rgba(0, 0, 0, 0.22);
+  border-radius: 10px;
+  cursor: move;
+  background: transparent;
+}
+.cluster-portrait-resize {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.32);
+  background: rgba(255, 255, 255, 0.9);
+  cursor: nwse-resize;
+}
 .cluster-collapse-btn {
   position: absolute;
   top: 12px;
@@ -1802,15 +1821,47 @@ body.narrative-graph-resizing {
 .cluster-theme-toggle:hover {
   background: #ffffff;
 }
+.cluster-video-toggle {
+  position: absolute;
+  top: 12px;
+  left: 172px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: blur(6px);
+  color: #333;
+  border-radius: 8px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.cluster-video-toggle--solo {
+  left: 96px;
+}
+.cluster-video-toggle:hover {
+  background: #ffffff;
+}
 .cluster-graph-container--night .cluster-collapse-btn,
-.cluster-graph-container--night .cluster-theme-toggle {
+.cluster-graph-container--night .cluster-theme-toggle,
+.cluster-graph-container--night .cluster-video-toggle {
   border-color: rgba(210,225,245,0.26);
   background: rgba(18,24,34,0.84);
   backdrop-filter: none;
   color: rgba(232,238,248,0.92);
   box-shadow: 0 2px 8px rgba(0,0,0,0.24);
 }
+.cluster-graph-container--night .cluster-portrait-port {
+  border-color: rgba(210, 225, 245, 0.36);
+}
+.cluster-graph-container--night .cluster-portrait-resize {
+  border-color: rgba(210, 225, 245, 0.6);
+  background: rgba(18, 24, 34, 0.9);
+}
 .cluster-graph-container--night .cluster-collapse-btn:hover,
-.cluster-graph-container--night .cluster-theme-toggle:hover {
+.cluster-graph-container--night .cluster-theme-toggle:hover,
+.cluster-graph-container--night .cluster-video-toggle:hover {
   background: rgba(28,36,48,0.92);
 }

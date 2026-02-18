@@ -23,6 +23,7 @@ import type { MemoryNode, EmbeddingsData } from '@/lib/narrative';
 const CACHE_KEY_CLUSTERS = 'echo-cluster-cache';
 const CACHE_KEY_LABELS = 'echo-cluster-labels';
 const CACHE_KEY_THEME = 'echo-cluster-theme';
+const PORTRAIT_VIDEO_SOURCES = ['/video.mp4', '/video2.mp4', '/video3.mp4'] as const;
 
 /* ── palette (editorial: deep saturated on white) ── */
 const PALETTE = [
@@ -126,7 +127,8 @@ function forceBoundary(cx: number, cy: number, maxR: number) {
  */
 function forceExcludeBody(
   containerRef: { current: HTMLDivElement | null },
-  selfieImgRef: { current: HTMLImageElement | null },
+  selfieImgRef: { current: HTMLImageElement | HTMLVideoElement | null },
+  portraitBoxRef: { current: PortraitBox | null },
 ) {
   let nodes: ClusterNode[] = [];
 
@@ -137,8 +139,10 @@ function forceExcludeBody(
 
     const w = container.clientWidth;
     const h = container.clientHeight;
-    const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
-    const layout = getSelfieLayout(w, h, aspect);
+    const aspect = getMediaAspect(img);
+    const layout = portraitBoxRef.current
+      ? getSelfieLayoutFromBox(portraitBoxRef.current)
+      : getSelfieLayout(w, h, aspect);
 
     for (const n of nodes) {
       if (n.x == null || n.y == null) continue;
@@ -369,6 +373,15 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+function getMediaAspect(media: HTMLImageElement | HTMLVideoElement): number {
+  if (media instanceof HTMLVideoElement) {
+    if (media.videoWidth > 0 && media.videoHeight > 0) return media.videoWidth / media.videoHeight;
+    return 0.78;
+  }
+  if (media.naturalWidth > 0 && media.naturalHeight > 0) return media.naturalWidth / media.naturalHeight;
+  return 0.78;
+}
+
 interface SelfieLayout {
   cx: number;
   cy: number;
@@ -384,6 +397,13 @@ interface SelfieLayout {
   excludeMargin: number;
 }
 
+interface PortraitBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 function getSelfieLayout(viewW: number, viewH: number, aspectRatio: number): SelfieLayout {
   const vw = Math.max(1, viewW);
   const vh = Math.max(1, viewH);
@@ -391,10 +411,10 @@ function getSelfieLayout(viewW: number, viewH: number, aspectRatio: number): Sel
   const aspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 0.78;
 
   // Keep portrait in the left lane and prevent it from intruding into the core graph area.
-  const baseScale = vw <= 700 ? 0.76 : vw <= 1200 ? 0.66 : 0.6;
-  let imgH = clamp(vm * baseScale, vh * 0.44, vh * 0.82);
+  const baseScale = vw <= 700 ? 0.6 : vw <= 1200 ? 0.5 : 0.44;
+  let imgH = clamp(vm * baseScale, vh * 0.34, vh * 0.72);
   let imgW = imgH * aspect;
-  const maxImgW = vw * (vw <= 700 ? 0.46 : 0.34);
+  const maxImgW = vw * (vw <= 700 ? 0.34 : 0.26);
   if (imgW > maxImgW) {
     const scale = maxImgW / Math.max(1, imgW);
     imgW *= scale;
@@ -402,7 +422,7 @@ function getSelfieLayout(viewW: number, viewH: number, aspectRatio: number): Sel
   }
 
   const leftPad = vw <= 700 ? 12 : 24;
-  const bottomPad = vw <= 700 ? -10 : -18;
+  const bottomPad = vw <= 700 ? -20 : -30;
   const cx = leftPad + imgW / 2;
   const cy = vh - bottomPad - imgH / 2;
 
@@ -419,6 +439,25 @@ function getSelfieLayout(viewW: number, viewH: number, aspectRatio: number): Sel
     bodyRX: imgW * 0.58,
     bodyRY: imgH * 0.44,
     excludeMargin: Math.max(30, vm * 0.05),
+  };
+}
+
+function getSelfieLayoutFromBox(box: PortraitBox): SelfieLayout {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  return {
+    cx,
+    cy,
+    imgW: box.w,
+    imgH: box.h,
+    headCX: cx - box.w * 0.02,
+    headCY: cy - box.h * 0.15,
+    headR: box.h * 0.22,
+    bodyCX: cx,
+    bodyCY: cy + box.h * 0.14,
+    bodyRX: box.w * 0.58,
+    bodyRY: box.h * 0.44,
+    excludeMargin: Math.max(24, Math.min(box.w, box.h) * 0.08),
   };
 }
 
@@ -514,15 +553,30 @@ function ClusterGraph({
   const animDurationRef = useRef<number>(0);
 
   // Selfie portrait
-  const selfieImgRef = useRef<HTMLImageElement | null>(null);
-  const selfieFeatheredRef = useRef<{ canvas: HTMLCanvasElement; w: number; h: number } | null>(null);
+  const selfieImgRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+  const portraitVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const portraitVideoIndexRef = useRef<number>(0);
+  const portraitSampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const portraitBgColorRef = useRef<string>('rgba(244, 244, 244, 0.96)');
+  const portraitSampleTickRef = useRef<number>(0);
+  const portraitBoxRef = useRef<PortraitBox | null>(null);
+  const portraitDragRef = useRef<{
+    mode: 'move' | 'resize';
+    startX: number;
+    startY: number;
+    startBox: PortraitBox;
+    aspect: number;
+  } | null>(null);
   const [selfieLoaded, setSelfieLoaded] = useState(false);
+  const [portraitBox, setPortraitBox] = useState<PortraitBox | null>(null);
+  const [portraitBoxAdjusted, setPortraitBoxAdjusted] = useState(false);
 
   const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
   const [clusterLinks, setClusterLinks] = useState<ClusterLink[]>([]);
   const [expandedCluster, setExpandedCluster] = useState<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState<number>(0);
   const [visualTheme, setVisualTheme] = useState<'day' | 'night'>('day');
+  const [showPortraitMedia, setShowPortraitMedia] = useState<boolean>(true);
   const visualThemeRef = useRef<'day' | 'night'>('day');
 
   useEffect(() => {
@@ -566,15 +620,164 @@ function ClusterGraph({
     visualThemeRef.current = visualTheme;
   }, [visualTheme]);
 
-  // Load selfie portrait image
   useEffect(() => {
-    const img = new Image();
-    img.onload = () => {
-      selfieImgRef.current = img;
-      setSelfieLoaded(true);
+    portraitBoxRef.current = portraitBox;
+  }, [portraitBox]);
+
+  const clampPortraitBox = useCallback((box: PortraitBox, aspect: number): PortraitBox => {
+    const container = containerRef.current;
+    if (!container) return box;
+    const w = Math.max(1, container.clientWidth);
+    const h = Math.max(1, container.clientHeight);
+    const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : Math.max(0.4, box.w / Math.max(1, box.h));
+    const minW = Math.max(110, Math.min(180, w * 0.12));
+    const maxW = Math.max(minW, w * 0.48);
+    const nextW = clamp(box.w, minW, maxW);
+    const nextH = nextW / safeAspect;
+    const maxX = Math.max(0, w - nextW);
+    const maxY = Math.max(0, h - nextH);
+    return {
+      x: clamp(box.x, 0, maxX),
+      y: clamp(box.y, 0, maxY),
+      w: nextW,
+      h: nextH,
     };
-    img.src = '/kobe-selfie.png';
   }, []);
+
+  const startPortraitInteraction = useCallback((mode: 'move' | 'resize', e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const current = portraitBoxRef.current;
+    if (!current) return;
+    const media = selfieImgRef.current;
+    const aspect = media ? getMediaAspect(media) : Math.max(0.4, current.w / Math.max(1, current.h));
+    portraitDragRef.current = {
+      mode,
+      startX: e.clientX,
+      startY: e.clientY,
+      startBox: current,
+      aspect,
+    };
+    setPortraitBoxAdjusted(true);
+  }, []);
+
+  useEffect(() => {
+    const media = selfieImgRef.current;
+    if (!(media instanceof HTMLVideoElement)) return;
+    if (showPortraitMedia) {
+      media.play().catch(() => {
+        // Autoplay can be blocked by browser policy.
+      });
+    } else {
+      media.pause();
+    }
+  }, [showPortraitMedia, selfieLoaded]);
+
+  // Load portrait media carousel (video1 -> video2 -> video3 -> repeat)
+  useEffect(() => {
+    const video = document.createElement('video');
+    portraitVideoElRef.current = video;
+    portraitVideoIndexRef.current = 0;
+    video.src = PORTRAIT_VIDEO_SOURCES[0];
+    video.loop = false;
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+
+    const onReady = () => {
+      selfieImgRef.current = video;
+      if (!portraitSampleCanvasRef.current) portraitSampleCanvasRef.current = document.createElement('canvas');
+      setSelfieLoaded(true);
+      video.play().catch(() => {
+        // Autoplay can be blocked; keeping the loaded frame is enough as fallback.
+      });
+    };
+
+    const playCurrentSource = () => {
+      const idx = portraitVideoIndexRef.current % PORTRAIT_VIDEO_SOURCES.length;
+      video.src = PORTRAIT_VIDEO_SOURCES[idx];
+      video.load();
+      video.play().catch(() => {
+        // Autoplay can be blocked; keep loaded frame.
+      });
+    };
+
+    const onEnded = () => {
+      portraitVideoIndexRef.current = (portraitVideoIndexRef.current + 1) % PORTRAIT_VIDEO_SOURCES.length;
+      playCurrentSource();
+    };
+
+    const onError = () => {
+      // Skip broken source and keep carousel moving.
+      portraitVideoIndexRef.current = (portraitVideoIndexRef.current + 1) % PORTRAIT_VIDEO_SOURCES.length;
+      playCurrentSource();
+    };
+
+    video.addEventListener('loadeddata', onReady);
+    video.addEventListener('ended', onEnded);
+    video.addEventListener('error', onError);
+    video.load();
+    return () => {
+      video.removeEventListener('loadeddata', onReady);
+      video.removeEventListener('ended', onEnded);
+      video.removeEventListener('error', onError);
+      video.pause();
+      portraitVideoElRef.current = null;
+      if (selfieImgRef.current === video) selfieImgRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const media = selfieImgRef.current;
+    if (!container || !media || portraitBoxAdjusted) return;
+    const layout = getSelfieLayout(container.clientWidth, container.clientHeight, getMediaAspect(media));
+    setPortraitBox({
+      x: layout.cx - layout.imgW / 2,
+      y: layout.cy - layout.imgH / 2,
+      w: layout.imgW,
+      h: layout.imgH,
+    });
+  }, [selfieLoaded, portraitBoxAdjusted, viewportWidth, showPortraitMedia]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const drag = portraitDragRef.current;
+      if (!drag) return;
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      if (drag.mode === 'move') {
+        const next = clampPortraitBox({
+          ...drag.startBox,
+          x: drag.startBox.x + dx,
+          y: drag.startBox.y + dy,
+        }, drag.aspect);
+        setPortraitBox(next);
+      } else {
+        const targetW = drag.startBox.w + dx;
+        const nextW = Math.max(1, targetW);
+        const next = clampPortraitBox({
+          x: drag.startBox.x,
+          y: drag.startBox.y,
+          w: nextW,
+          h: nextW / drag.aspect,
+        }, drag.aspect);
+        setPortraitBox(next);
+      }
+    };
+
+    const onUp = () => {
+      portraitDragRef.current = null;
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [clampPortraitBox]);
 
   useEffect(() => {
     const canvas = glCanvasRef.current;
@@ -917,7 +1120,7 @@ function ClusterGraph({
       .force('charge', forceManyBody<ClusterNode>().strength(-520))
       .force('center', forceCenter(w * 0.58, h / 2))
       .force('collide', forceCollide<ClusterNode>().radius((d) => d.radius + 24))
-      .force('excludeBody', forceExcludeBody(containerRef, selfieImgRef) as any)
+      .force('excludeBody', forceExcludeBody(containerRef, selfieImgRef, portraitBoxRef) as any)
       .alphaDecay(0.02);
 
     simRef.current = sim;
@@ -2494,66 +2697,49 @@ function ClusterGraph({
 
       // ── Portrait HUD layer: fixed to viewport (left-bottom), unaffected by zoom/pan ──
       const selfieImg = selfieImgRef.current;
-      if (selfieImg) {
-        const imgAspect = selfieImg.naturalWidth / Math.max(1, selfieImg.naturalHeight);
-        const layout = getSelfieLayout(vw, vh, imgAspect);
-        const portraitAlpha = isNightMode ? (focusMode ? 0.46 : 0.66) : (focusMode ? 0.3 : 1);
-        const glowAlpha = isNightMode ? (focusMode ? 0.04 : 0.08) : (focusMode ? 0.18 : 1);
+      if (showPortraitMedia && selfieImg) {
+        const imgAspect = getMediaAspect(selfieImg);
+        const layout = portraitBoxRef.current
+          ? getSelfieLayoutFromBox(portraitBoxRef.current)
+          : getSelfieLayout(vw, vh, imgAspect);
+        const portraitAlpha = isNightMode ? (focusMode ? 0.58 : 0.78) : 1;
 
-        let feathered = selfieFeatheredRef.current;
-        const needsRebuild = !feathered ||
-          Math.abs(feathered.w - layout.imgW) > 2 ||
-          Math.abs(feathered.h - layout.imgH) > 2;
-        if (needsRebuild) {
-          const off = document.createElement('canvas');
-          const pw = Math.ceil(layout.imgW);
-          const ph = Math.ceil(layout.imgH);
-          off.width = pw;
-          off.height = ph;
-          const offCtx = off.getContext('2d');
-          if (offCtx) {
-            offCtx.drawImage(selfieImg, 0, 0, pw, ph);
-            offCtx.globalCompositeOperation = 'destination-in';
-            const mask = offCtx.createRadialGradient(
-              pw * 0.48, ph * 0.35, ph * 0.12,
-              pw * 0.48, ph * 0.40, ph * 0.56,
-            );
-            mask.addColorStop(0, 'rgba(0,0,0,1)');
-            mask.addColorStop(0.55, 'rgba(0,0,0,0.95)');
-            mask.addColorStop(0.78, 'rgba(0,0,0,0.5)');
-            mask.addColorStop(0.92, 'rgba(0,0,0,0.15)');
-            mask.addColorStop(1, 'rgba(0,0,0,0)');
-            offCtx.fillStyle = mask;
-            offCtx.fillRect(0, 0, pw, ph);
+        if (selfieImg instanceof HTMLVideoElement && selfieImg.readyState >= 2) {
+          portraitSampleTickRef.current += 1;
+          if (portraitSampleTickRef.current % 12 === 0) {
+            const sampleCanvas = portraitSampleCanvasRef.current;
+            if (sampleCanvas) {
+              sampleCanvas.width = 4;
+              sampleCanvas.height = 4;
+              const sctx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+              if (sctx) {
+                sctx.drawImage(selfieImg, 0, 0, 4, 4);
+                const p = sctx.getImageData(0, 0, 1, 1).data;
+                portraitBgColorRef.current = `rgba(${p[0]}, ${p[1]}, ${p[2]}, 0.96)`;
+              }
+            }
           }
-          feathered = { canvas: off, w: layout.imgW, h: layout.imgH };
-          selfieFeatheredRef.current = feathered;
         }
 
-        if (feathered) {
-          ctx.save();
-          const glow = ctx.createRadialGradient(
-            layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.08,
-            layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58,
-          );
-          glow.addColorStop(0, `rgba(255,255,255,${0.5 * glowAlpha})`);
-          glow.addColorStop(0.4, `rgba(250,250,250,${0.22 * glowAlpha})`);
-          glow.addColorStop(1, 'rgba(245,245,245,0)');
-          ctx.fillStyle = glow;
-          ctx.beginPath();
-          ctx.arc(layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58, 0, Math.PI * 2);
-          ctx.fill();
+        ctx.save();
+        const pad = 12;
+        const bgX = layout.cx - layout.imgW / 2 - pad;
+        const bgY = layout.cy - layout.imgH / 2 - pad;
+        const bgW = layout.imgW + pad * 2;
+        const bgH = layout.imgH + pad * 2;
+        ctx.fillStyle = portraitBgColorRef.current;
+        roundedRectPath(ctx, bgX, bgY, bgW, bgH, 20);
+        ctx.fill();
 
-          ctx.globalAlpha = portraitAlpha;
-          ctx.drawImage(
-            feathered.canvas,
-            layout.cx - layout.imgW / 2,
-            layout.cy - layout.imgH / 2,
-            layout.imgW,
-            layout.imgH,
-          );
-          ctx.restore();
-        }
+        ctx.globalAlpha = portraitAlpha;
+        ctx.drawImage(
+          selfieImg,
+          layout.cx - layout.imgW / 2,
+          layout.cy - layout.imgH / 2,
+          layout.imgW,
+          layout.imgH,
+        );
+        ctx.restore();
       }
 
       rafRef.current = requestAnimationFrame(render);
@@ -2965,6 +3151,15 @@ function ClusterGraph({
     return <div className="memory-status">No memory data for constellation view</div>;
   }
 
+  const portraitOverlayStyle = portraitBox
+    ? {
+        left: `${portraitBox.x}px`,
+        top: `${portraitBox.y}px`,
+        width: `${portraitBox.w}px`,
+        height: `${portraitBox.h}px`,
+      }
+    : undefined;
+
   return (
     <div
       ref={containerRef}
@@ -2990,10 +3185,31 @@ function ClusterGraph({
       >
         {visualTheme === 'night' ? 'Day mode' : 'Night mode'}
       </button>
+      <button
+        className={`cluster-video-toggle${expandedCluster === null ? ' cluster-video-toggle--solo' : ''}`}
+        onClick={() => setShowPortraitMedia((v) => !v)}
+        aria-label={showPortraitMedia ? 'Hide portrait video' : 'Show portrait video'}
+      >
+        {showPortraitMedia ? 'Video off' : 'Video on'}
+      </button>
       {expandedCluster !== null && (
         <button className="cluster-collapse-btn" onClick={collapseCluster}>
           Back
         </button>
+      )}
+      {showPortraitMedia && portraitOverlayStyle && (
+        <div
+          className="cluster-portrait-port"
+          style={portraitOverlayStyle}
+          onMouseDown={(e) => startPortraitInteraction('move', e)}
+          title="Drag to move"
+        >
+          <div
+            className="cluster-portrait-resize"
+            onMouseDown={(e) => startPortraitInteraction('resize', e)}
+            title="Drag to resize"
+          />
+        </div>
       )}
     </div>
   );
