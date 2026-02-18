@@ -122,7 +122,7 @@ function forceBoundary(cx: number, cy: number, maxR: number) {
 
 /* ── custom d3-force: silhouette exclusion zone ──
  * Pushes cluster nodes outside the person's face & body contour
- * so the selfie portrait sits at the center with nodes orbiting around it.
+ * so the selfie portrait can live on the left without node overlap.
  */
 function forceExcludeBody(
   containerRef: { current: HTMLDivElement | null },
@@ -390,12 +390,21 @@ function getSelfieLayout(viewW: number, viewH: number, aspectRatio: number): Sel
   const vm = Math.max(1, Math.min(vw, vh));
   const aspect = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 0.78;
 
-  // Responsive sizing keeps portrait dominant across desktop/mobile.
-  const baseScale = vw <= 700 ? 0.88 : vw <= 1200 ? 0.8 : 0.72;
-  const imgH = clamp(vm * baseScale, vh * 0.58, vh * 0.9);
-  const imgW = imgH * aspect;
-  const cx = vw * 0.5;
-  const cy = vh * 0.55;
+  // Keep portrait in the left lane and prevent it from intruding into the core graph area.
+  const baseScale = vw <= 700 ? 0.76 : vw <= 1200 ? 0.66 : 0.6;
+  let imgH = clamp(vm * baseScale, vh * 0.44, vh * 0.82);
+  let imgW = imgH * aspect;
+  const maxImgW = vw * (vw <= 700 ? 0.46 : 0.34);
+  if (imgW > maxImgW) {
+    const scale = maxImgW / Math.max(1, imgW);
+    imgW *= scale;
+    imgH *= scale;
+  }
+
+  const leftPad = vw <= 700 ? 12 : 24;
+  const bottomPad = vw <= 700 ? -10 : -18;
+  const cx = leftPad + imgW / 2;
+  const cy = vh - bottomPad - imgH / 2;
 
   return {
     cx,
@@ -409,7 +418,7 @@ function getSelfieLayout(viewW: number, viewH: number, aspectRatio: number): Sel
     bodyCY: cy + imgH * 0.14,
     bodyRX: imgW * 0.58,
     bodyRY: imgH * 0.44,
-    excludeMargin: Math.max(48, vm * 0.07),
+    excludeMargin: Math.max(30, vm * 0.05),
   };
 }
 
@@ -906,7 +915,7 @@ function ClusterGraph({
       .force('link', forceLink<ClusterNode, ClusterLink>(simLinks as ClusterLink[])
         .id((d) => d.id).distance(160).strength((l) => Math.min(0.3, (l as ClusterLink).weight * 0.015)))
       .force('charge', forceManyBody<ClusterNode>().strength(-520))
-      .force('center', forceCenter(w / 2, h / 2))
+      .force('center', forceCenter(w * 0.58, h / 2))
       .force('collide', forceCollide<ClusterNode>().radius((d) => d.radius + 24))
       .force('excludeBody', forceExcludeBody(containerRef, selfieImgRef) as any)
       .alphaDecay(0.02);
@@ -2444,68 +2453,6 @@ function ClusterGraph({
         }
       }
 
-      // ── Portrait top layer: keep above all graph lines/nodes ──
-      const selfieImg = selfieImgRef.current;
-      if (selfieImg) {
-        const imgAspect = selfieImg.naturalWidth / Math.max(1, selfieImg.naturalHeight);
-        const layout = getSelfieLayout(vw, vh, imgAspect);
-        const portraitAlpha = isNightMode ? (focusMode ? 0.46 : 0.66) : (focusMode ? 0.3 : 1);
-        const glowAlpha = isNightMode ? (focusMode ? 0.04 : 0.08) : (focusMode ? 0.18 : 1);
-
-        let feathered = selfieFeatheredRef.current;
-        const needsRebuild = !feathered ||
-          Math.abs(feathered.w - layout.imgW) > 2 ||
-          Math.abs(feathered.h - layout.imgH) > 2;
-        if (needsRebuild) {
-          const off = document.createElement('canvas');
-          const pw = Math.ceil(layout.imgW);
-          const ph = Math.ceil(layout.imgH);
-          off.width = pw;
-          off.height = ph;
-          const offCtx = off.getContext('2d');
-          if (offCtx) {
-            offCtx.drawImage(selfieImg, 0, 0, pw, ph);
-            offCtx.globalCompositeOperation = 'destination-in';
-            const mask = offCtx.createRadialGradient(
-              pw * 0.48, ph * 0.35, ph * 0.12,
-              pw * 0.48, ph * 0.40, ph * 0.56,
-            );
-            mask.addColorStop(0, 'rgba(0,0,0,1)');
-            mask.addColorStop(0.55, 'rgba(0,0,0,0.95)');
-            mask.addColorStop(0.78, 'rgba(0,0,0,0.5)');
-            mask.addColorStop(0.92, 'rgba(0,0,0,0.15)');
-            mask.addColorStop(1, 'rgba(0,0,0,0)');
-            offCtx.fillStyle = mask;
-            offCtx.fillRect(0, 0, pw, ph);
-          }
-          feathered = { canvas: off, w: layout.imgW, h: layout.imgH };
-          selfieFeatheredRef.current = feathered;
-        }
-
-        ctx.save();
-        const glow = ctx.createRadialGradient(
-          layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.08,
-          layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58,
-        );
-        glow.addColorStop(0, `rgba(255,255,255,${0.5 * glowAlpha})`);
-        glow.addColorStop(0.4, `rgba(250,250,250,${0.22 * glowAlpha})`);
-        glow.addColorStop(1, 'rgba(245,245,245,0)');
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.globalAlpha = portraitAlpha;
-        ctx.drawImage(
-          feathered.canvas,
-          layout.cx - layout.imgW / 2,
-          layout.cy - layout.imgH / 2,
-          layout.imgW,
-          layout.imgH,
-        );
-        ctx.restore();
-      }
-
       const focusAnchorCallback = onFocusAnchorChangeRef.current;
       const trackedFocusMemId = focusMemoryIdRef.current;
       if (focusAnchorCallback && trackedFocusMemId) {
@@ -2545,6 +2492,70 @@ function ClusterGraph({
 
       ctx.restore(); // pop camera
 
+      // ── Portrait HUD layer: fixed to viewport (left-bottom), unaffected by zoom/pan ──
+      const selfieImg = selfieImgRef.current;
+      if (selfieImg) {
+        const imgAspect = selfieImg.naturalWidth / Math.max(1, selfieImg.naturalHeight);
+        const layout = getSelfieLayout(vw, vh, imgAspect);
+        const portraitAlpha = isNightMode ? (focusMode ? 0.46 : 0.66) : (focusMode ? 0.3 : 1);
+        const glowAlpha = isNightMode ? (focusMode ? 0.04 : 0.08) : (focusMode ? 0.18 : 1);
+
+        let feathered = selfieFeatheredRef.current;
+        const needsRebuild = !feathered ||
+          Math.abs(feathered.w - layout.imgW) > 2 ||
+          Math.abs(feathered.h - layout.imgH) > 2;
+        if (needsRebuild) {
+          const off = document.createElement('canvas');
+          const pw = Math.ceil(layout.imgW);
+          const ph = Math.ceil(layout.imgH);
+          off.width = pw;
+          off.height = ph;
+          const offCtx = off.getContext('2d');
+          if (offCtx) {
+            offCtx.drawImage(selfieImg, 0, 0, pw, ph);
+            offCtx.globalCompositeOperation = 'destination-in';
+            const mask = offCtx.createRadialGradient(
+              pw * 0.48, ph * 0.35, ph * 0.12,
+              pw * 0.48, ph * 0.40, ph * 0.56,
+            );
+            mask.addColorStop(0, 'rgba(0,0,0,1)');
+            mask.addColorStop(0.55, 'rgba(0,0,0,0.95)');
+            mask.addColorStop(0.78, 'rgba(0,0,0,0.5)');
+            mask.addColorStop(0.92, 'rgba(0,0,0,0.15)');
+            mask.addColorStop(1, 'rgba(0,0,0,0)');
+            offCtx.fillStyle = mask;
+            offCtx.fillRect(0, 0, pw, ph);
+          }
+          feathered = { canvas: off, w: layout.imgW, h: layout.imgH };
+          selfieFeatheredRef.current = feathered;
+        }
+
+        if (feathered) {
+          ctx.save();
+          const glow = ctx.createRadialGradient(
+            layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.08,
+            layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58,
+          );
+          glow.addColorStop(0, `rgba(255,255,255,${0.5 * glowAlpha})`);
+          glow.addColorStop(0.4, `rgba(250,250,250,${0.22 * glowAlpha})`);
+          glow.addColorStop(1, 'rgba(245,245,245,0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(layout.cx, layout.cy - layout.imgH * 0.04, layout.imgH * 0.58, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.globalAlpha = portraitAlpha;
+          ctx.drawImage(
+            feathered.canvas,
+            layout.cx - layout.imgW / 2,
+            layout.cy - layout.imgH / 2,
+            layout.imgW,
+            layout.imgH,
+          );
+          ctx.restore();
+        }
+      }
+
       rafRef.current = requestAnimationFrame(render);
     };
 
@@ -2560,7 +2571,7 @@ function ClusterGraph({
       const w = container.clientWidth; const h = container.clientHeight;
       setViewportWidth(w);
       if (simRef.current) {
-        simRef.current.force('center', forceCenter(w / 2, h / 2));
+        simRef.current.force('center', forceCenter(w * 0.58, h / 2));
         simRef.current.alpha(0.3).restart();
       }
     });

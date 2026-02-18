@@ -1505,18 +1505,18 @@ body.narrative-graph-resizing {
 .narrative-text-floating {
   position: absolute;
   left: clamp(16px, 3.2vw, 54px);
-  top: clamp(120px, 25vh, 310px);
+  top: clamp(84px, 18vh, 230px);
   z-index: 36;
   width: clamp(420px, 34vw, 620px);
   max-height: none;
   overflow-y: visible;
   overflow-x: visible;
-  padding: 12px 12px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(8px);
-  border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  padding: 8px 10px;
+  background: transparent;
+  backdrop-filter: none;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
   pointer-events: auto;
   scrollbar-width: none;
 }
@@ -1539,22 +1539,38 @@ body.narrative-graph-resizing {
 }
 .narrative-text-body {
   font-size: clamp(13px, 0.78vw, 16px);
-  font-weight: 560;
+  font-weight: 580;
   line-height: 1.72;
   letter-spacing: 0.01em;
-  color: rgba(26, 26, 26, 0.75);
-  text-shadow: none;
+  color: rgba(26, 26, 26, 0.82);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 .narrative-text-floating .memory-floating-header {
-  margin-bottom: 10px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  margin-bottom: 8px;
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 .narrative-text-floating .memory-floating-header h3 {
   font-size: clamp(15px, 1.02vw, 20px);
-  font-weight: 680;
+  font-weight: 700;
   letter-spacing: 0.01em;
-  color: rgba(26, 26, 26, 0.82);
-  text-shadow: none;
+  color: rgba(26, 26, 26, 0.9);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+.narrative-text-floating .memory-floating-header button {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(26, 26, 26, 0.62);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.narrative-text-floating .memory-floating-header button:hover {
+  background: transparent;
+  color: rgba(26, 26, 26, 0.9);
 }
 .person-narrative-floating {
   left: auto;
@@ -1570,42 +1586,45 @@ body.narrative-graph-resizing {
   display: inline-flex;
   align-items: center;
   position: relative;
-  margin: 0 0.06em;
+  margin: 0 0.08em;
   padding: 0.12em 0.48em;
-  border-radius: 999px;
   cursor: pointer;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  background: rgba(0, 0, 0, 0.04);
-  transition: transform 0.18s ease, color 0.15s, text-shadow 0.15s, box-shadow 0.2s ease;
+  border: 1px solid rgba(13, 148, 136, 0.24);
+  background: rgba(13, 148, 136, 0.09);
+  border-radius: 999px;
+  transition: transform 0.16s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
   vertical-align: baseline;
   white-space: nowrap;
   font-size: 0.94em;
+  text-decoration: none;
 }
 .narrative-key-link:hover {
   color: rgba(26, 26, 26, 0.96);
   text-shadow: none;
+  background: rgba(13, 148, 136, 0.14);
+  border-color: rgba(13, 148, 136, 0.38);
   transform: translateY(-1px);
 }
 .narrative-key-link:active {
-  transform: scale(0.985);
+  transform: translateY(0);
 }
 
 /* Tag variant: My Public Memory */
 .narrative-key-link.memory-tag-public {
   background: rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.16);
   color: rgba(26, 26, 26, 0.88);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   text-shadow: none;
   animation: narrative-public-breathe 3.8s ease-in-out infinite;
-  overflow: hidden;
+  overflow: visible;
 }
 .narrative-key-link.memory-tag-public:hover {
-  background: rgba(0, 0, 0, 0.08);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.09);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 .narrative-key-link.memory-tag-public:active {
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 .narrative-key-link.memory-tag-public::before {
   content: '';
@@ -1617,15 +1636,15 @@ body.narrative-graph-resizing {
     rgba(0, 0, 0, 0.01) 45%,
     rgba(0, 0, 0, 0) 70%
   );
-  opacity: 0.55;
+  opacity: 0.5;
   transform: translateX(-30%);
   animation: public-flow 6.5s ease-in-out infinite;
   pointer-events: none;
 }
 /* Tag variant: My Travel Memory */
 .narrative-key-link.memory-tag-travel {
-  background: rgba(13, 148, 136, 0.08);
-  border-color: rgba(13, 148, 136, 0.25);
+  background: rgba(13, 148, 136, 0.1);
+  border-color: rgba(13, 148, 136, 0.3);
   box-shadow: 0 1px 4px rgba(13, 148, 136, 0.08);
 }
 
@@ -1658,7 +1677,7 @@ body.narrative-graph-resizing {
   .narrative-text-floating {
     width: calc(100% - 24px);
     left: 12px;
-    top: 84px;
+    top: 64px;
     max-height: 45vh;
     overflow-y: auto;
     scrollbar-width: thin;
