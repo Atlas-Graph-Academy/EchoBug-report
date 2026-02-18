@@ -31,6 +31,7 @@ interface DisplayMemoryRecord {
   details: string;
   color: string;
   glow: string;
+  isPublic: boolean;
 }
 
 interface PillLayout {
@@ -305,6 +306,7 @@ function toDisplayMemoryRecord(record: MemoryRecord): DisplayMemoryRecord {
     details: normalizeValue(record.details),
     color: emotionStyle.color,
     glow: emotionStyle.glow,
+    isPublic: record.isPublic,
   };
 }
 
@@ -1190,7 +1192,12 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
       <header className="memory-detail-header">
         <div>
           <h3>{selectedRecord.keyText}</h3>
-          <p>{selectedRecord.createdTimeText}</p>
+          <p>
+            {selectedRecord.createdTimeText}
+            <span className={`memory-detail-privacy ${selectedRecord.isPublic ? 'memory-detail-privacy--public' : 'memory-detail-privacy--private'}`}>
+              {selectedRecord.isPublic ? 'Public' : '\u{1F512} Private'}
+            </span>
+          </p>
         </div>
       </header>
 
