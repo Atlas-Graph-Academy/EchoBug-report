@@ -13,6 +13,7 @@ export interface MemoryRecord {
   location: string;
   time: string;
   createdAt: string;
+  isPublic: boolean;
 }
 
 interface ActiveSourceMeta {
@@ -164,6 +165,7 @@ function mapRecords(rows: string[][]): MemoryRecord[] {
     .map((row, i) => {
       const id = read(row, idx('id')) || `mem-${i + 1}`;
       const createdAt = read(row, idx('created_at')) || read(row, idx('createdAt'));
+      const isPublicRaw = read(row, idx('is_public'));
       return {
         id,
         object: read(row, idx('object')) || id,
@@ -175,6 +177,7 @@ function mapRecords(rows: string[][]): MemoryRecord[] {
         location: read(row, idx('location')) || 'Unknown',
         time: read(row, idx('time')) || createdAt || '',
         createdAt: createdAt || read(row, idx('time')) || '',
+        isPublic: isPublicRaw === 'true',
       };
     });
 }

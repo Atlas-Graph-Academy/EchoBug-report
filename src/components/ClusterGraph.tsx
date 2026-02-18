@@ -210,6 +210,7 @@ interface MemSubNode extends SimulationNodeDatum {
   emotion: string;
   importance: number;
   targetR: number;
+  isPublic: boolean;
 }
 
 interface MemSubLink extends SimulationLinkDatum<MemSubNode> {
@@ -580,6 +581,7 @@ function ClusterGraph({
   const [dbRecords, setDbRecords] = useState<Array<{
     id: string; object: string; category: string; emotion: string;
     description: string; details: string; time: string; createdAt: string;
+    isPublic: boolean;
   }> | null>(null);
   const [dbEmbeddingsData, setDbEmbeddingsData] = useState<EmbeddingsData | null>(null);
   const [dbLoading, setDbLoading] = useState(false);
@@ -631,6 +633,7 @@ function ClusterGraph({
       object: (r.object || 'Unknown').trim(),
       category: (r.category || 'Unknown').trim(),
       emotion: (r.emotion || 'Unknown').trim(),
+      isPublic: r.isPublic,
     }));
   }, [dbRecords]);
 
@@ -1341,15 +1344,20 @@ function ClusterGraph({
     const memberSet = new Set(memberIds);
     const idxByMemId = new Map<string, number>();
 
+    const PRIVATE_COLOR = '#9ca3af';
+    const PRIVATE_GLOW = 'rgba(156,163,175,0.18)';
+
     const nodes: MemSubNode[] = memberIds.map((id) => {
       const mem = memById.get(id);
       const emotion = mem?.emotion || 'Unknown';
-      const style = eStyle(emotion);
+      const isPublic = mem?.isPublic !== false; // default to public if unknown
+      const style = isPublic ? eStyle(emotion) : { color: PRIVATE_COLOR, glow: PRIVATE_GLOW };
       idxByMemId.set(id, idxByMemId.size);
       return {
         memId: id,
         label: (mem?.key || id).slice(0, 30),
         color: style.color, glow: style.glow, emotion,
+        isPublic,
         importance: 0.3,
         targetR: clusterR * 0.5,
       };
@@ -1730,7 +1738,7 @@ function ClusterGraph({
             const n = nodes[i];
             pointPos[i * 2] = n.x || 0;
             pointPos[i * 2 + 1] = n.y || 0;
-            const [r, g, b] = parseHexColor(n.color);
+            const [r, g, b] = n.isPublic ? parseHexColor(n.color) : [0.61, 0.64, 0.69]; // gray for private
             const imp = Math.max(0, Math.min(1, n.importance || 0));
             pointImportance[i] = imp;
             const baseMul = 0.82 + imp * 0.24;
@@ -1746,7 +1754,7 @@ function ClusterGraph({
               pointColor[i * 4] = r * baseMul;
               pointColor[i * 4 + 1] = g * baseMul;
               pointColor[i * 4 + 2] = b * baseMul;
-              pointColor[i * 4 + 3] = 0.8 + imp * 0.2;
+              pointColor[i * 4 + 3] = n.isPublic ? (0.8 + imp * 0.2) : (0.55 + imp * 0.15);
             }
           }
 
@@ -2494,6 +2502,35 @@ function ClusterGraph({
           ctx.globalAlpha = focusMode ? focusAlpha : (isSel || isNarrativeRelated ? 1 : 0.92);
           ctx.fill();
           ctx.shadowBlur = 0;
+          // Draw lock icon for private memories
+          if (!sn.isPublic) {
+            const lk = r * 0.55; // lock size relative to node
+            const lx = sn.x - lk * 0.5;
+            const ly = sn.y - lk * 0.55;
+            ctx.globalAlpha = focusMode ? focusAlpha * 0.9 : 0.85;
+            // Lock body (rounded rect)
+            const bw = lk, bh = lk * 0.7, bx = lx, by = ly + lk * 0.35;
+            const br = lk * 0.12;
+            ctx.beginPath();
+            ctx.moveTo(bx + br, by);
+            ctx.lineTo(bx + bw - br, by);
+            ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + br);
+            ctx.lineTo(bx + bw, by + bh - br);
+            ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - br, by + bh);
+            ctx.lineTo(bx + br, by + bh);
+            ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - br);
+            ctx.lineTo(bx, by + br);
+            ctx.quadraticCurveTo(bx, by, bx + br, by);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.fill();
+            // Lock shackle (arc)
+            ctx.beginPath();
+            ctx.arc(sn.x, ly + lk * 0.38, lk * 0.28, Math.PI, 0);
+            ctx.lineWidth = lk * 0.16;
+            ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+            ctx.stroke();
+          }
           ctx.restore();
           if (isHov) {
             hoveredNodeObj = sn;

@@ -16,6 +16,7 @@ interface MemoryRecord {
   location: string;
   time: string;
   createdAt: string;
+  isPublic: boolean;
 }
 
 interface DisplayMemoryRecord {
@@ -252,7 +253,7 @@ function getEmotionStyle(emotion: string) {
   return style;
 }
 
-function buildNarrativeHtml(rawText: string, keyIdMap: Record<string, string>): string {
+function buildNarrativeHtml(rawText: string, keyIdMap: Record<string, string>, publicIds?: Set<string>): string {
   const raw = rawText
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/\n\n+/g, '\n\n');
@@ -270,9 +271,14 @@ function buildNarrativeHtml(rawText: string, keyIdMap: Record<string, string>): 
   const html = raw.replace(combined, (match) => {
     const id = lowerMap.get(match.toLowerCase());
     if (id) {
-      const seed = hashEmotion(`${id}:${match.toLowerCase()}`);
-      const tagClass = seed % 2 === 0 ? 'memory-tag-public' : 'memory-tag-travel';
-      return `<span class="narrative-key narrative-key-link ${tagClass}" data-mem-id="${id}">${match}</span>`;
+      const isPublic = publicIds ? publicIds.has(id) : true;
+      if (isPublic) {
+        const seed = hashEmotion(`${id}:${match.toLowerCase()}`);
+        const tagClass = seed % 2 === 0 ? 'memory-tag-public' : 'memory-tag-travel';
+        return `<span class="narrative-key narrative-key-link ${tagClass}" data-mem-id="${id}">${match}</span>`;
+      } else {
+        return `<span class="narrative-key narrative-key-link narrative-key-private" data-mem-id="${id}">&#x1F512; ${match}</span>`;
+      }
     }
     return match;
   });
@@ -700,6 +706,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
       object: normalizeValue(record.object),
       category: normalizeValue(record.category),
       emotion: normalizeValue(record.emotion),
+      isPublic: record.isPublic,
     }));
   }, [sortedRecords]);
 
@@ -998,9 +1005,17 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
     );
   const unifiedNarrativeTitle = usingPersonNarrative ? activeEntity.name : 'Narrative';
   const unifiedNarrativeLoading = usingPersonNarrative ? personNarrativeLoading : narrativeLoading;
+  const publicMemoryIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of sortedRecords) {
+      if (r.isPublic) set.add(r.id);
+    }
+    return set;
+  }, [sortedRecords]);
+
   const unifiedNarrativeHtml = usingPersonNarrative
-    ? buildNarrativeHtml(personNarrativeText ?? '', personNarrativeKeyIdMap)
-    : buildNarrativeHtml(narrativeText ?? '', narrativeKeyIdMap);
+    ? buildNarrativeHtml(personNarrativeText ?? '', personNarrativeKeyIdMap, publicMemoryIds)
+    : buildNarrativeHtml(narrativeText ?? '', narrativeKeyIdMap, publicMemoryIds);
 
   useEffect(() => {
     if (showUnifiedNarrativePanel) {

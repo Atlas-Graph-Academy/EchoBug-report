@@ -18,6 +18,7 @@ export interface MemoryNode {
   object: string;
   category: string;
   emotion: string;
+  isPublic?: boolean;
 }
 
 export interface NeighborEntry {

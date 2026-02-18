@@ -32,7 +32,8 @@ function percentile(sorted: number[], p: number): number {
 }
 
 async function fetchAllMemories() {
-  const all: Record<string, unknown>[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const all: any[] = [];
   let from = 0;
 
   while (true) {
