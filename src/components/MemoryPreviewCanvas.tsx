@@ -342,6 +342,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
   const [peoplePanelDetached, setPeoplePanelDetached] = useState(false);
   const [peoplePanelPosition, setPeoplePanelPosition] = useState<{ left: number; top: number } | null>(null);
   const [narrativeMode, setNarrativeMode] = useState<'chain' | 'person'>('chain');
+  const [narrativeLanguage, setNarrativeLanguage] = useState<'zh' | 'en'>('zh');
   const [narrativePanelVisible, setNarrativePanelVisible] = useState(true);
   const [narrativePanelDetached, setNarrativePanelDetached] = useState(false);
   const [narrativePanelPosition, setNarrativePanelPosition] = useState<{ left: number; top: number } | null>(null);
@@ -529,7 +530,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
     fetch('/api/narrative-text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memories }),
+      body: JSON.stringify({ memories, language: narrativeLanguage }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -549,7 +550,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
     return () => {
       cancelled = true;
     };
-  }, [activeEntity, activePersonRecords]);
+  }, [activeEntity, activePersonRecords, narrativeLanguage]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -792,7 +793,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
     fetch('/api/narrative-text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memories }),
+      body: JSON.stringify({ memories, language: narrativeLanguage }),
     })
       .then(res => res.json())
       .then(data => {
@@ -809,7 +810,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
       });
 
     return () => { cancelled = true; };
-  }, [narrativeContext, sortedRecords]);
+  }, [narrativeContext, sortedRecords, narrativeLanguage]);
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const container = containerRef.current;
@@ -1402,16 +1403,40 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
             >
               <div className="memory-floating-header" onMouseDown={(e) => handleFloatingDragStart('narrative', e)}>
                 <h3>{unifiedNarrativeTitle}</h3>
-                <button
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setNarrativePanelVisible(false);
-                  }}
-                  aria-label="Close narrative text"
-                >
-                  ×
-                </button>
+                <div className="narrative-lang-controls">
+                  <button
+                    className={narrativeLanguage === 'zh' ? 'active' : ''}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNarrativeLanguage('zh');
+                    }}
+                    aria-label="Switch narrative language to Chinese"
+                  >
+                    中文
+                  </button>
+                  <button
+                    className={narrativeLanguage === 'en' ? 'active' : ''}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNarrativeLanguage('en');
+                    }}
+                    aria-label="Switch narrative language to English"
+                  >
+                    EN
+                  </button>
+                  <button
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNarrativePanelVisible(false);
+                    }}
+                    aria-label="Close narrative text"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
               <div
                 onClick={(e) => {
