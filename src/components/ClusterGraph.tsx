@@ -498,8 +498,8 @@ function narrativeFocusPoint(cluster: ClusterNode, memId: string): { x: number; 
 }
 
 function ClusterGraph({
-  memories,
-  embeddingsData,
+  memories: propMemories,
+  embeddingsData: propEmbeddingsData,
   onMemoryClick,
   onClearFocus,
   highlightedMemoryIds = [],
@@ -577,6 +577,75 @@ function ClusterGraph({
   const [viewportWidth, setViewportWidth] = useState<number>(0);
   const [visualTheme, setVisualTheme] = useState<'day' | 'night'>('day');
   const [showPortraitMedia, setShowPortraitMedia] = useState<boolean>(true);
+  const [dbRecords, setDbRecords] = useState<Array<{
+    id: string; object: string; category: string; emotion: string;
+    description: string; details: string; time: string; createdAt: string;
+  }> | null>(null);
+  const [dbEmbeddingsData, setDbEmbeddingsData] = useState<EmbeddingsData | null>(null);
+  const [dbLoading, setDbLoading] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [similarityThreshold, setSimilarityThreshold] = useState<number | null>(null);
+  const sliderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pendingThreshold, setPendingThreshold] = useState<number | null>(null);
+
+  const fetchDbMemories = useCallback(async () => {
+    setDbLoading(true);
+    setDbError(null);
+    try {
+      const res = await fetch('/api/fetch-memories');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setDbRecords(json.records);
+      setDbEmbeddingsData(json.embeddingsData);
+      // Set adaptive threshold from stats (default to p25)
+      if (json.embeddingsData?.stats) {
+        const adaptive = json.embeddingsData.stats.p25;
+        setSimilarityThreshold(adaptive);
+        setPendingThreshold(adaptive);
+        console.log(`[ClusterGraph] Adaptive threshold: ${adaptive} (p25), stats:`, json.embeddingsData.stats);
+      }
+      console.log(`[ClusterGraph] Fetched ${json.count} memories from DB`);
+      console.log(`[ClusterGraph] _debug:`, json._debug);
+      // Log a sample of neighbors to verify data
+      const sampleIds = Object.keys(json.embeddingsData?.neighbors || {}).slice(0, 3);
+      for (const id of sampleIds) {
+        console.log(`[ClusterGraph] neighbors[${id}]:`, json.embeddingsData.neighbors[id]?.slice(0, 3));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setDbError(msg);
+      console.error('[ClusterGraph] Failed to fetch DB memories:', msg);
+    } finally {
+      setDbLoading(false);
+    }
+  }, []);
+
+  // When DB data is loaded, override prop memories with DB memories
+  const dbMemoryNodes = useMemo<MemoryNode[] | null>(() => {
+    if (!dbRecords) return null;
+    return dbRecords.map(r => ({
+      id: r.id,
+      key: (r.object || r.id || '').trim() || r.id,
+      text: r.description || r.object || '',
+      createdAt: r.createdAt || r.time || '',
+      object: (r.object || 'Unknown').trim(),
+      category: (r.category || 'Unknown').trim(),
+      emotion: (r.emotion || 'Unknown').trim(),
+    }));
+  }, [dbRecords]);
+
+  // When DB data loads, reset expanded cluster since cluster IDs change
+  useEffect(() => {
+    if (dbMemoryNodes) {
+      setExpandedCluster(null);
+      localStorage.removeItem(CACHE_KEY_CLUSTERS);
+      localStorage.removeItem(CACHE_KEY_LABELS);
+    }
+  }, [dbMemoryNodes]);
+
+  // Use DB data if available, otherwise fall back to props
+  const memories = dbMemoryNodes ?? propMemories;
+  const embeddingsData = dbEmbeddingsData ?? propEmbeddingsData;
   const visualThemeRef = useRef<'day' | 'night'>('day');
 
   useEffect(() => {
@@ -941,23 +1010,31 @@ function ClusterGraph({
     return clusterFingerprint(memories.length, memories[0].id, memories[memories.length - 1].id);
   }, [memories]);
 
+  // Cache key includes threshold so slider changes re-cluster
+  const thresholdKey = similarityThreshold ?? 0.35;
+
   const clusterData = useMemo<{ clusters: SemanticCluster[]; edges: ClusterEdge[] } | null>(() => {
     if (!fp) return null;
+    // Skip localStorage cache when threshold is actively changing via slider
+    const cacheFingerprint = `${fp}:t${thresholdKey}`;
     try {
       const raw = localStorage.getItem(CACHE_KEY_CLUSTERS);
       if (raw) {
         const cached: CachedClustering = JSON.parse(raw);
-        if (cached.fingerprint === fp) return { clusters: cached.clusters, edges: cached.edges };
+        if (cached.fingerprint === cacheFingerprint) return { clusters: cached.clusters, edges: cached.edges };
       }
     } catch { /* miss */ }
-    const result = buildClusters(memories, embeddingsData, { maxClusters: 12 });
+    const result = buildClusters(memories, embeddingsData, {
+      maxClusters: 12,
+      similarityThreshold: thresholdKey,
+    });
     try {
       localStorage.setItem(CACHE_KEY_CLUSTERS, JSON.stringify({
-        fingerprint: fp, clusters: result.clusters, edges: result.edges,
+        fingerprint: cacheFingerprint, clusters: result.clusters, edges: result.edges,
       } as CachedClustering));
     } catch { /* ignore */ }
     return { clusters: result.clusters, edges: result.edges };
-  }, [fp, memories, embeddingsData]);
+  }, [fp, memories, embeddingsData, thresholdKey]);
 
   const cachedLabels = useMemo<Map<number, string>>(() => {
     const map = new Map<number, string>();
@@ -3192,6 +3269,43 @@ function ClusterGraph({
       >
         {showPortraitMedia ? 'Video off' : 'Video on'}
       </button>
+      <button
+        className={`cluster-db-fetch${expandedCluster === null ? ' cluster-db-fetch--solo' : ''}`}
+        onClick={fetchDbMemories}
+        disabled={dbLoading || dbRecords !== null}
+        aria-label="Fetch memories from database"
+      >
+        {dbLoading ? 'Loading…' : dbRecords ? `DB: ${dbRecords.length}` : 'Fetch DB'}
+      </button>
+      {dbError && (
+        <span className="cluster-db-error">{dbError}</span>
+      )}
+      {embeddingsData.stats && similarityThreshold !== null && (
+        <div className="cluster-threshold-slider">
+          <label>
+            Threshold: {(pendingThreshold ?? similarityThreshold).toFixed(3)}
+            {clusterData ? ` (${clusterData.clusters.length} clusters)` : ''}
+          </label>
+          <input
+            type="range"
+            min={embeddingsData.stats.min}
+            max={embeddingsData.stats.max}
+            step={0.001}
+            value={pendingThreshold ?? similarityThreshold}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              setPendingThreshold(val);
+              if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
+              sliderDebounceRef.current = setTimeout(() => {
+                setSimilarityThreshold(val);
+                // Clear cache so clusters rebuild
+                localStorage.removeItem(CACHE_KEY_CLUSTERS);
+                localStorage.removeItem(CACHE_KEY_LABELS);
+              }, 300);
+            }}
+          />
+        </div>
+      )}
       {expandedCluster !== null && (
         <button className="cluster-collapse-btn" onClick={collapseCluster}>
           Back

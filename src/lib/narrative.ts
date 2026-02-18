@@ -25,8 +25,20 @@ export interface NeighborEntry {
   similarity: number;
 }
 
+export interface SimilarityStats {
+  mean: number;
+  std: number;
+  min: number;
+  max: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  count: number;
+}
+
 export interface EmbeddingsData {
   neighbors: Record<string, NeighborEntry[]>;
+  stats?: SimilarityStats;
 }
 
 export interface NarrativeChain {
