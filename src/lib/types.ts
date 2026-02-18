@@ -75,6 +75,8 @@ export interface MemoryRecord {
   location: string;
   time: string;
   createdAt: string;
+  sourceType?: string;
+  memoryTab?: string;
 }
 
 export interface NarrativeNode {

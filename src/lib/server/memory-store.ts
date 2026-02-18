@@ -14,6 +14,8 @@ export interface MemoryRecord {
   time: string;
   createdAt: string;
   isPublic: boolean;
+  sourceType: string;
+  memoryTab: string;
 }
 
 interface ActiveSourceMeta {
@@ -178,6 +180,8 @@ function mapRecords(rows: string[][]): MemoryRecord[] {
         time: read(row, idx('time')) || createdAt || '',
         createdAt: createdAt || read(row, idx('time')) || '',
         isPublic: isPublicRaw === 'true',
+        sourceType: read(row, idx('type')) || 'unknown',
+        memoryTab: read(row, idx('keys')) || '',
       };
     });
 }
@@ -364,4 +368,3 @@ export async function importCsvDataset(
 
   return { datasetId, rowCount: records.length, updatedAt };
 }
-

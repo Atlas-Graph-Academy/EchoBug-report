@@ -17,6 +17,8 @@ interface MemoryRecord {
   time: string;
   createdAt: string;
   isPublic: boolean;
+  sourceType: string;
+  memoryTab: string;
 }
 
 interface DisplayMemoryRecord {
@@ -32,6 +34,9 @@ interface DisplayMemoryRecord {
   color: string;
   glow: string;
   isPublic: boolean;
+  sourceType: string;
+  sourcePlatform: string;
+  sourceIcon: string;
 }
 
 interface PillLayout {
@@ -70,6 +75,15 @@ const EMOTION_PALETTE = [
   { color: '#7bed9f', glow: 'rgba(123,237,159,0.45)' },
   { color: '#70a1ff', glow: 'rgba(112,161,255,0.45)' },
 ];
+
+const THIRD_PARTY_PLATFORMS = [
+  { id: 'cloudgbt', label: 'CloudGBT', icon: '\u2601\uFE0F' },
+  { id: 'gemite', label: 'Gemite', icon: '\u2728' },
+  { id: 'claude', label: 'Claude', icon: '\u{1F9E0}' },
+  { id: 'gpt', label: 'ChatGPT', icon: '\u{1F916}' },
+  { id: 'perplexity', label: 'Perplexity', icon: '\u{1F50D}' },
+  { id: 'grok', label: 'Grok', icon: '\u26A1' },
+] as const;
 
 function formatShortTime(value: string): string {
   if (!value) return 'Unknown';
@@ -254,6 +268,15 @@ function getEmotionStyle(emotion: string) {
   return style;
 }
 
+function normalizeSourceType(value: string): string {
+  return normalizeValue(value).toLowerCase().replace(/\s+/g, '_');
+}
+
+function pickThirdPartyPlatform(record: MemoryRecord) {
+  const seed = hashEmotion(`${record.id}:${record.object}:${record.createdAt}`);
+  return THIRD_PARTY_PLATFORMS[seed % THIRD_PARTY_PLATFORMS.length];
+}
+
 function buildNarrativeHtml(rawText: string, keyIdMap: Record<string, string>, publicIds?: Set<string>): string {
   const raw = rawText
     .replace(/\*\*(.+?)\*\*/g, '$1')
@@ -293,6 +316,17 @@ function toDisplayMemoryRecord(record: MemoryRecord): DisplayMemoryRecord {
   const shortTimeText = formatShortTime(record.time || record.createdAt);
   const emotion = normalizeValue(record.emotion);
   const emotionStyle = getEmotionStyle(emotion);
+  const sourceType = normalizeSourceType(record.sourceType || record.memoryTab);
+  const thirdPartyPlatform = sourceType === 'third_party' ? pickThirdPartyPlatform(record) : null;
+  const sourcePlatform =
+    sourceType === 'third_party'
+      ? thirdPartyPlatform?.label ?? 'Third Party'
+      : sourceType === 'echo_chat'
+        ? 'Echo Chat'
+        : sourceType === 'echo_voice'
+          ? 'Echo Voice'
+          : normalizeValue(record.sourceType);
+  const sourceIcon = sourceType === 'third_party' ? (thirdPartyPlatform?.icon ?? '\u{1F310}') : '';
 
   return {
     keyText,
@@ -307,6 +341,9 @@ function toDisplayMemoryRecord(record: MemoryRecord): DisplayMemoryRecord {
     color: emotionStyle.color,
     glow: emotionStyle.glow,
     isPublic: record.isPublic,
+    sourceType,
+    sourcePlatform,
+    sourceIcon,
   };
 }
 
@@ -354,6 +391,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
   const [narrativePanelVisible, setNarrativePanelVisible] = useState(true);
   const [narrativePanelDetached, setNarrativePanelDetached] = useState(false);
   const [narrativePanelPosition, setNarrativePanelPosition] = useState<{ left: number; top: number } | null>(null);
+  const [clusterPublicOnly, setClusterPublicOnly] = useState(false);
 
   // Reset narrative graph panel when narrative overlay closes
   useEffect(() => {
@@ -445,6 +483,10 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
     people.sort(sorter);
 
     return { people };
+  }, [sortedRecords]);
+
+  const thirdPartyCount = useMemo(() => {
+    return sortedRecords.filter((record) => normalizeSourceType(record.sourceType) === 'third_party').length;
   }, [sortedRecords]);
 
   const filteredRecords = useMemo(() => {
@@ -583,7 +625,8 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
       let cursorY = verticalPadding;
 
       displayRecords.forEach((item, index) => {
-        const text = `${item.keyText} · ${item.shortTimeText}`;
+        const sourcePrefix = item.sourceType === 'third_party' && item.sourceIcon ? `${item.sourceIcon} ` : '';
+        const text = `${sourcePrefix}${item.keyText} · ${item.shortTimeText}`;
         const textWidth = ctx.measureText(text).width;
         const widthByText = Math.ceil(textWidth + 28);
         const pillWidth = Math.max(minPillWidth, Math.min(maxPillWidth, widthByText));
@@ -711,6 +754,15 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
       isPublic: record.isPublic,
     }));
   }, [sortedRecords]);
+
+  const clusterMemoryNodes = useMemo<MemoryNode[]>(() => {
+    if (!clusterPublicOnly) return memoryNodes;
+    return memoryNodes.filter((node) => node.isPublic);
+  }, [clusterPublicOnly, memoryNodes]);
+
+  const clusterVisibleIdSet = useMemo(() => {
+    return new Set(clusterMemoryNodes.map((node) => node.id));
+  }, [clusterMemoryNodes]);
 
   const narrativeContext = useMemo(() => {
     if (!narrativeMemoryId || !embeddingsData) return null;
@@ -1090,14 +1142,28 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
   }, [narrativePanelDetached, narrativePanelPosition]);
 
   const constellationHighlightedMemoryIds = useMemo(() => {
-    if (showNarrativeOverlay && constellationFocusActive) return narrativeContext?.listedIds ?? [];
-    return activePersonEntity?.memoryIds ?? [];
-  }, [showNarrativeOverlay, constellationFocusActive, narrativeContext, activePersonEntity]);
+    const rawIds = showNarrativeOverlay && constellationFocusActive
+      ? narrativeContext?.listedIds ?? []
+      : activePersonEntity?.memoryIds ?? [];
+    return rawIds.filter((id) => clusterVisibleIdSet.has(id));
+  }, [showNarrativeOverlay, constellationFocusActive, narrativeContext, activePersonEntity, clusterVisibleIdSet]);
 
   const constellationSequenceMemoryIds = useMemo(() => {
-    if (showNarrativeOverlay && constellationFocusActive) return narrativeContext?.primarySequenceIds ?? [];
-    return activePersonSequenceIds;
-  }, [showNarrativeOverlay, constellationFocusActive, narrativeContext, activePersonSequenceIds]);
+    const rawIds = showNarrativeOverlay && constellationFocusActive
+      ? narrativeContext?.primarySequenceIds ?? []
+      : activePersonSequenceIds;
+    return rawIds.filter((id) => clusterVisibleIdSet.has(id));
+  }, [showNarrativeOverlay, constellationFocusActive, narrativeContext, activePersonSequenceIds, clusterVisibleIdSet]);
+
+  useEffect(() => {
+    if (!clusterPublicOnly) return;
+    if (!narrativeMemoryId) return;
+    if (clusterVisibleIdSet.has(narrativeMemoryId)) return;
+    setNarrativeMemoryId(null);
+    setSelectedRecord(null);
+    setDetailSource(null);
+    setConstellationFocusActive(false);
+  }, [clusterPublicOnly, narrativeMemoryId, clusterVisibleIdSet]);
 
   const constellationDetailStyle = useMemo(() => {
     if (!showConstellationDetail || !constellationMainRef.current) return undefined;
@@ -1192,6 +1258,12 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
       <header className="memory-detail-header">
         <div>
           <h3>{selectedRecord.keyText}</h3>
+          {selectedRecord.sourceType === 'third_party' && (
+            <div className="memory-detail-source-pill" title={`Source: ${selectedRecord.sourcePlatform}`}>
+              <span aria-hidden>{selectedRecord.sourceIcon}</span>
+              <span>{selectedRecord.sourcePlatform}</span>
+            </div>
+          )}
           <p>
             {selectedRecord.createdTimeText}
             <span className={`memory-detail-privacy ${selectedRecord.isPublic ? 'memory-detail-privacy--public' : 'memory-detail-privacy--private'}`}>
@@ -1236,6 +1308,7 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
               <div><strong>Object:</strong> {selectedRecord.object}</div>
               <div><strong>Emotion:</strong> {selectedRecord.emotion}</div>
               <div><strong>Visibility:</strong> {selectedRecord.visibility}</div>
+              <div><strong>Source:</strong> {selectedRecord.sourcePlatform}</div>
             </div>
           )}
         </div>
@@ -1271,8 +1344,18 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
                 Constellation
               </button>
             </div>
+            {viewMode === 'constellation' && (
+              <label className={`memory-public-toggle ${clusterPublicOnly ? 'active' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={clusterPublicOnly}
+                  onChange={(event) => setClusterPublicOnly(event.target.checked)}
+                />
+                <span>仅显示公开数据</span>
+              </label>
+            )}
             <span>
-              {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions · {entitySummary.people.length} people
+              {displayRecords.length}/{sortedRecords.length} pills · {emotionSummary.length} emotions · {entitySummary.people.length} people · {thirdPartyCount} third-party
             </span>
           </div>
           {viewMode === 'stream' && (
@@ -1307,11 +1390,11 @@ export default function MemoryPreviewCanvas({ reloadKey = 0 }: { reloadKey?: num
           ) : (
             embeddingsData && (
               <ClusterGraph
-                memories={memoryNodes}
+                memories={clusterMemoryNodes}
                 embeddingsData={embeddingsData}
                 onMemoryClick={handleConstellationMemoryClick}
                 onClearFocus={clearConstellationFocus}
-                focusMemoryId={showNarrativeOverlay ? narrativeMemoryId : null}
+                focusMemoryId={showNarrativeOverlay && narrativeMemoryId && clusterVisibleIdSet.has(narrativeMemoryId) ? narrativeMemoryId : null}
                 onFocusAnchorChange={handleConstellationFocusAnchorChange}
                 highlightedMemoryIds={constellationHighlightedMemoryIds}
                 sequenceMemoryIds={constellationSequenceMemoryIds}
