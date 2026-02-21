@@ -9,9 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.1.0",
+    "@supabase/supabase-js": "^2.57.4",
+    "antd": "^5.28.0",
     "d3-force": "^3.0.0",
     "d3-quadtree": "^3.0.1",
     "next": "16.1.6",
+    "nodemailer": "^7.0.10",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
