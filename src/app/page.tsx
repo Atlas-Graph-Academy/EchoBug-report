@@ -105,6 +105,10 @@ export default function Home() {
     router.push('/memory-preview');
   }, [router]);
 
+  const handleOpenWaitlistDashboard = useCallback(() => {
+    router.push('/waitlist/dashboard');
+  }, [router]);
+
   // Loading state
   if (isLoading) {
     return (
@@ -126,7 +130,12 @@ export default function Home() {
 
   return (
     <>
-      <AppShell user={user} photoCount={photos.length} onLogout={logout}>
+      <AppShell
+        user={user}
+        photoCount={photos.length}
+        onOpenWaitlist={handleOpenWaitlistDashboard}
+        onLogout={logout}
+      >
         <PhotoGrid
           photos={photos}
           onDelete={handleDeletePhoto}

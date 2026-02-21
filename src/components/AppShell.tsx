@@ -5,11 +5,18 @@ import type { LinearUser } from '@/lib/types';
 interface AppShellProps {
   user: LinearUser;
   photoCount: number;
+  onOpenWaitlist: () => void;
   onLogout: () => void;
   children: React.ReactNode;
 }
 
-export default function AppShell({ user, photoCount, onLogout, children }: AppShellProps) {
+export default function AppShell({
+  user,
+  photoCount,
+  onOpenWaitlist,
+  onLogout,
+  children,
+}: AppShellProps) {
   const name = user.displayName || user.name || user.email || 'User';
 
   return (
@@ -32,6 +39,9 @@ export default function AppShell({ user, photoCount, onLogout, children }: AppSh
           <span className="photo-count">
             {photoCount} photo{photoCount !== 1 ? 's' : ''}
           </span>
+          <button className="logout-btn" onClick={onOpenWaitlist}>
+            Waitlist
+          </button>
           <button className="logout-btn" onClick={onLogout}>
             Log out
           </button>
